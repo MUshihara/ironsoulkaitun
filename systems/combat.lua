@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - CONTINUOUS SMART-SETTLEMENT COMBAT V59
+-- IRON SOUL - NATIVE REPLAY CONTINUOUS COMBAT V59.2
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -30,7 +30,6 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local VirtualInputManager = game:GetService("VirtualInputManager")
 local TeleportService = game:GetService("TeleportService")
 
 local LocalPlayer = Players.LocalPlayer
@@ -109,7 +108,7 @@ task.wait(2)
 --========================================================--
 
 local ROOT_FOLDER =
-    "IronSoul_ContinuousCombat_V59"
+    "IronSoul_NativeReplayCombat_V59_2"
 
 local SESSION =
     os.date("%Y%m%d_%H%M%S")
@@ -141,7 +140,7 @@ end
 local function log(s)
     local line = "[" .. ts() .. "] " .. tostring(s)
     add(report, line)
-    print("[IronSoul V59 COMBAT]", s)
+    print("[IronSoul V59.2 COMBAT]", s)
 end
 
 local function combatLog(s)
@@ -154,19 +153,19 @@ end
 local function portalLog(s)
     local line = "[" .. ts() .. "] " .. tostring(s)
     add(portalOut, line)
-    print("[IronSoul V59 GATE]", s)
+    print("[IronSoul V59.2 GATE]", s)
 end
 
 local function deathLog(s)
     local line = "[" .. ts() .. "] " .. tostring(s)
     add(deathOut, line)
-    print("[IronSoul V59 DEATH]", s)
+    print("[IronSoul V59.2 DEATH]", s)
 end
 
 local function settlementLog(s)
     local line = "[" .. ts() .. "] " .. tostring(s)
     add(settlementOut, line)
-    print("[IronSoul V59 SETTLEMENT]", s)
+    print("[IronSoul V59.2 SETTLEMENT]", s)
 end
 
 local function save()
@@ -1571,26 +1570,6 @@ local function calibrateHeadless(enemy)
         "AttackDriver=HEADLESS_FAILED; "
             .. "Mouse1 fallback is intentionally disabled."
     )
-end
-
-local function nativeBasic()
-    VirtualInputManager:
-        SendMouseButtonEvent(
-            0, 0, 0,
-            true,
-            game,
-            0
-        )
-
-    task.wait(0.025)
-
-    VirtualInputManager:
-        SendMouseButtonEvent(
-            0, 0, 0,
-            false,
-            game,
-            0
-        )
 end
 
 local HeadlessRecovery = {
@@ -3502,8 +3481,8 @@ end
 --   * dungeon failed / timed out / out of lives
 --
 -- Combat remains NO-Mouse1.
--- Play Again may use one settlement UI click because that is the
--- game-owned route that avoids a Lobby round-trip.
+-- Play Again uses the exact GameRoundRE server route recovered from
+-- ScreenSettlement. No settlement UI click is required.
 --========================================================--
 
 local LOBBY_PLACE_ID =
@@ -3514,7 +3493,7 @@ local Config =
     or {}
 
 local MAX_DIRECT_REPEATS =
-    2
+    6
 
 local ATTACK_SOFT_CAP =
     15
@@ -3532,7 +3511,7 @@ local BASE =
     getgenv().IronSoulBaseURL
     or (
         "https://raw.githubusercontent.com/"
-        .. "MUshihara/IronSoul-Kaitun/main/"
+        .. "MUshihara/ironsoulkaitun/main/"
     )
 
 local function readJournal()
@@ -3638,6 +3617,184 @@ local function inventoryCountNow()
     return n
 end
 
+local function equipmentPowerReplay(uuid)
+    if not uuid
+        or not EquipmentUtilReplay
+        or type(
+            EquipmentUtilReplay.GetEquipmentPowerByUUID
+        ) ~= "function"
+    then
+        return 0
+    end
+
+    local ok, value =
+        pcall(function()
+            return EquipmentUtilReplay:
+                GetEquipmentPowerByUUID(
+                    LocalPlayer,
+                    uuid
+                )
+        end)
+
+    return ok
+        and num(value)
+        or 0
+end
+
+local function equipmentBaseReplay(uuid)
+    if not uuid
+        or not EquipmentCombatReplay
+        or type(
+            EquipmentCombatReplay.GetDmgOrHp
+        ) ~= "function"
+    then
+        return 0
+    end
+
+    local ok, value =
+        pcall(function()
+            return EquipmentCombatReplay:
+                GetDmgOrHp(
+                    LocalPlayer,
+                    uuid
+                )
+        end)
+
+    return ok
+        and num(value)
+        or 0
+end
+
+local function betterEquipmentWaiting()
+    local d = pdata()
+
+    local equipment =
+        d
+        and d.Equipment
+
+    if type(equipment)
+        ~= "table"
+    then
+        return false
+    end
+
+    local owned =
+        equipment.Owned
+        or {}
+
+    local slots =
+        equipment.EquipSlots
+        or {}
+
+    local active =
+        equipment.CurWeaponSlot
+        or "Weapon"
+
+    local equippedWeapon =
+        slots[active]
+
+    local equippedSwordBase =
+        equipmentBaseReplay(
+            equippedWeapon
+        )
+
+    local equippedSwordPower =
+        equipmentPowerReplay(
+            equippedWeapon
+        )
+
+    local bestSwordBase =
+        equippedSwordBase
+
+    local bestSwordPower =
+        equippedSwordPower
+
+    for uuid, item in pairs(owned) do
+        if type(item) == "table"
+            and item.Type == "Weapon"
+            and item.Class == "Sword"
+        then
+            local base =
+                equipmentBaseReplay(
+                    uuid
+                )
+
+            local pwr =
+                equipmentPowerReplay(
+                    uuid
+                )
+
+            if base > bestSwordBase
+                or (
+                    base == bestSwordBase
+                    and pwr > bestSwordPower
+                )
+            then
+                bestSwordBase = base
+                bestSwordPower = pwr
+            end
+        end
+    end
+
+    if bestSwordBase
+            > equippedSwordBase
+        or (
+            bestSwordBase
+                == equippedSwordBase
+            and bestSwordPower
+                > equippedSwordPower
+        )
+    then
+        return true,
+            "BETTER_SWORD"
+    end
+
+    for _, armorClass in ipairs({
+        "Helmet",
+        "Breastplate",
+    }) do
+        local equipped =
+            slots[armorClass]
+
+        local equippedPower =
+            equipmentPowerReplay(
+                equipped
+            )
+
+        local bestPower =
+            equippedPower
+
+        for uuid, item in pairs(owned) do
+            if type(item) == "table"
+                and item.Type == "Armor"
+                and item.Class
+                    == armorClass
+            then
+                local pwr =
+                    equipmentPowerReplay(
+                        uuid
+                    )
+
+                if pwr > bestPower then
+                    bestPower = pwr
+                end
+            end
+        end
+
+        if bestPower
+            > equippedPower
+        then
+            return true,
+                "BETTER_"
+                .. string.upper(
+                    armorClass
+                )
+        end
+    end
+
+    return false
+end
+
 local function lobbyMaintenanceNeeded()
     local d = pdata()
 
@@ -3679,15 +3836,31 @@ local function lobbyMaintenanceNeeded()
             "INVENTORY_HIGH"
     end
 
+    local better,
+        betterReason =
+            betterEquipmentWaiting()
+
+    if better then
+        return true,
+            betterReason
+    end
+
     return false,
         "NONE"
 end
+
 
 local ResWorldRound =
     req("ResWorldRound")
 
 local WorldUtil =
     req("WorldUtil")
+
+local EquipmentUtilReplay =
+    req("EquipmentUtil")
+
+local EquipmentCombatReplay =
+    req("EquipmentCombat")
 
 local STORY_ORDER = {
     World1 = 1,
@@ -3927,196 +4100,6 @@ local function postRunPlan()
     }
 end
 
-local function effectivelyVisible2(obj)
-    if not obj then
-        return false
-    end
-
-    local current = obj
-
-    while current
-        and current ~= LocalPlayer
-    do
-        if current:IsA("GuiObject")
-            and current.Visible == false
-        then
-            return false
-        elseif current:IsA("ScreenGui")
-            and current.Enabled == false
-        then
-            return false
-        end
-
-        if current
-            == LocalPlayer.PlayerGui
-        then
-            break
-        end
-
-        current = current.Parent
-    end
-
-    if obj:IsA("GuiObject")
-        and (
-            obj.AbsoluteSize.X <= 0
-            or obj.AbsoluteSize.Y <= 0
-        )
-    then
-        return false
-    end
-
-    return true
-end
-
-local function findPlayAgainButton()
-    local pg =
-        LocalPlayer:
-            FindFirstChildOfClass(
-                "PlayerGui"
-            )
-
-    if not pg then
-        return nil
-    end
-
-    local best = nil
-
-    for _, obj in ipairs(
-        pg:GetDescendants()
-    ) do
-        if (
-            obj:IsA("TextButton")
-            or obj:IsA("ImageButton")
-        )
-            and effectivelyVisible2(
-                obj
-            )
-        then
-            local texts = {}
-
-            if obj:IsA("TextButton") then
-                table.insert(
-                    texts,
-                    tostring(
-                        obj.Text or ""
-                    )
-                )
-            end
-
-            for _, child in ipairs(
-                obj:GetDescendants()
-            ) do
-                if child:IsA("TextLabel")
-                    or child:IsA("TextButton")
-                then
-                    table.insert(
-                        texts,
-                        tostring(
-                            child.Text or ""
-                        )
-                    )
-                end
-            end
-
-            for _, text in ipairs(texts) do
-                local low =
-                    string.lower(text)
-
-                if string.find(
-                    low,
-                    "play again",
-                    1,
-                    true
-                )
-                then
-                    best = obj
-
-                    if string.find(
-                        low,
-                        "0/1",
-                        1,
-                        true
-                    ) then
-                        return obj
-                    end
-                end
-            end
-        end
-    end
-
-    return best
-end
-
-local function clickSettlementButton(
-    button
-)
-    if not button
-        or not effectivelyVisible2(
-            button
-        )
-    then
-        return false
-    end
-
-    local pos =
-        button.AbsolutePosition
-
-    local size =
-        button.AbsoluteSize
-
-    local x =
-        math.floor(
-            pos.X
-            + size.X * 0.5
-        )
-
-    local y =
-        math.floor(
-            pos.Y
-            + size.Y * 0.5
-        )
-
-    settlementLog(
-        "PLAY_AGAIN_UI_CLICK x="
-            .. tostring(x)
-            .. " y="
-            .. tostring(y)
-    )
-
-    return pcall(function()
-        VirtualInputManager:
-            SendMouseMoveEvent(
-                x,
-                y,
-                game
-            )
-
-        task.wait(0.06)
-
-        VirtualInputManager:
-            SendMouseButtonEvent(
-                x,
-                y,
-                0,
-                true,
-                game,
-                0
-            )
-
-        task.wait(0.07)
-
-        VirtualInputManager:
-            SendMouseButtonEvent(
-                x,
-                y,
-                0,
-                false,
-                game,
-                0
-            )
-    end)
-end
-
 local function queueNext(reason)
     if type(queueBootstrap)
         == "function"
@@ -4169,7 +4152,75 @@ local function directLobby(reason)
             .. tostring(reason)
     )
 
-    task.wait(0.35)
+    task.wait(0.20)
+
+    local remote =
+        WorldUtil
+        and WorldUtil.RemoteEvent
+
+    if remote then
+        local before =
+            LocalPlayer:
+                GetAttribute(
+                    "IsTeleporting"
+                )
+
+        local sent, err =
+            pcall(function()
+                -- Exact native Return-to-Lobby route recovered from
+                -- ScreenSettlement:
+                -- WorldUtil.RemoteEvent:FireServer("BackLobby")
+                remote:
+                    FireServer(
+                        "BackLobby"
+                    )
+            end)
+
+        settlementLog(
+            "BACK_LOBBY_REMOTE sent="
+                .. tostring(sent)
+                .. " err="
+                .. tostring(err)
+                .. " before="
+                .. tostring(before)
+        )
+
+        if sent then
+            local started =
+                waitUntil(
+                    function()
+                        local target =
+                            LocalPlayer:
+                                GetAttribute(
+                                    "IsTeleporting"
+                                )
+
+                        if target ~= nil
+                            and target ~= false
+                        then
+                            return target
+                        end
+                    end,
+                    5,
+                    0.10
+                )
+
+            if started then
+                settlementLog(
+                    "BACK_LOBBY_REMOTE teleport="
+                        .. tostring(started)
+                )
+
+                return true
+            end
+        end
+    end
+
+    -- Hard safety fallback only.
+    settlementLog(
+        "BACK_LOBBY_REMOTE did not confirm; "
+            .. "TeleportService fallback."
+    )
 
     local ok, err =
         pcall(function()
@@ -4181,7 +4232,7 @@ local function directLobby(reason)
         end)
 
     settlementLog(
-        "LOBBY_TELEPORT ok="
+        "LOBBY_TELEPORT_FALLBACK ok="
             .. tostring(ok)
             .. " err="
             .. tostring(err)
@@ -4190,24 +4241,35 @@ local function directLobby(reason)
     return ok
 end
 
+
 local function attemptDirectReplay(
     journal,
     postPlan
 )
-    local button =
-        waitUntil(
-            findPlayAgainButton,
-            6,
-            0.10
-        )
+    local gameRoundRE =
+        ReplicatedStorage:
+            FindFirstChild(
+                "Remotes"
+            )
 
-    if not button then
+    gameRoundRE =
+        gameRoundRE
+        and gameRoundRE:
+            FindFirstChild(
+                "GameRoundRE"
+            )
+
+    if not gameRoundRE
+        or not gameRoundRE:IsA(
+            "RemoteEvent"
+        )
+    then
         settlementLog(
-            "Play Again button not found."
+            "GameRoundRE missing."
         )
 
         return false,
-            "NO_PLAY_AGAIN_BUTTON"
+            "NO_GAMEROUND_RE"
     end
 
     local directRepeats =
@@ -4219,6 +4281,38 @@ local function attemptDirectReplay(
         num(
             journal.FailureCount
         )
+
+    local playersCount =
+        num(
+            GameRoundCfg:
+                GetAttribute(
+                    "PlayersCount"
+                )
+        )
+
+    if playersCount <= 0 then
+        playersCount = 1
+    end
+
+    local beforeVotes =
+        num(
+            GameRoundCfg:
+                GetAttribute(
+                    "VotedAgainCount"
+                )
+        )
+
+    -- Exact settlement code:
+    -- solo normal button -> VotePlayAgain
+    -- "Play again (alone)" -> PlayAgainAlone
+    --
+    -- Our farm creates a solo room, so VotePlayAgain should normally
+    -- be selected. If a run somehow contains >1 players, choose the
+    -- game's explicit alone route so the automation remains independent.
+    local command =
+        playersCount > 1
+        and "PlayAgainAlone"
+        or "VotePlayAgain"
 
     writeJournal({
         State = "REPLAYING",
@@ -4244,75 +4338,202 @@ local function attemptDirectReplay(
     })
 
     queueNext(
-        "direct Play Again"
+        "native "
+            .. command
     )
+
+    local oldJob =
+        game.JobId
+
+    local oldRound =
+        gameRound()
 
     local teleported =
         false
 
     local conn =
         LocalPlayer.OnTeleport:
-            Connect(function()
+            Connect(function(state)
                 teleported = true
+
+                settlementLog(
+                    "REPLAY OnTeleport="
+                        .. tostring(state)
+                )
             end)
 
-    local clicked =
-        clickSettlementButton(
-            button
-        )
+    settlementLog(
+        "NATIVE_REPLAY command="
+            .. command
+            .. " PlayersCount="
+            .. tostring(playersCount)
+            .. " BeforeVotes="
+            .. tostring(beforeVotes)
+            .. " GameRound="
+            .. tostring(oldRound)
+            .. " JobId="
+            .. tostring(oldJob)
+    )
 
-    if not clicked then
+    local sent, sendErr =
+        pcall(function()
+            gameRoundRE:
+                FireServer(
+                    command
+                )
+        end)
+
+    settlementLog(
+        "NATIVE_REPLAY FireServer sent="
+            .. tostring(sent)
+            .. " err="
+            .. tostring(sendErr)
+    )
+
+    if not sent then
         pcall(function()
             conn:Disconnect()
         end)
 
         return false,
-            "PLAY_AGAIN_CLICK_FAILED"
+            "REPLAY_REMOTE_ERROR"
     end
 
-    local deadline =
-        os.clock() + 8
+    local voteAccepted =
+        false
+
+    local voteDeadline =
+        os.clock() + 2.5
 
     while os.clock()
-        < deadline
+        < voteDeadline
     do
+        if command
+            == "VotePlayAgain"
+        then
+            local votes =
+                num(
+                    GameRoundCfg:
+                        GetAttribute(
+                            "VotedAgainCount"
+                        )
+                )
+
+            if votes > beforeVotes then
+                voteAccepted = true
+
+                settlementLog(
+                    "NATIVE_REPLAY vote accepted "
+                        .. tostring(beforeVotes)
+                        .. " -> "
+                        .. tostring(votes)
+                )
+
+                break
+            end
+        else
+            -- PlayAgainAlone does not need the vote count.
+            voteAccepted = true
+            break
+        end
+
         if teleported
             or LocalPlayer:
                 GetAttribute(
                     "IsTeleporting"
                 )
         then
-            pcall(function()
-                conn:Disconnect()
-            end)
-
-            settlementLog(
-                "PLAY_AGAIN teleport started."
-            )
-
-            return true,
-                "TELEPORT"
+            voteAccepted = true
+            break
         end
 
-        -- Some Play Again implementations reset the same place without
-        -- exposing a normal teleport event. If settlement disappears and
-        -- GameRound resets, bootstrap the new run directly.
-        local settled =
-            settlementDetected()
+        if not settlementDetected() then
+            voteAccepted = true
+            break
+        end
 
-        local gr =
-            gameRound()
+        task.wait(0.08)
+    end
 
-        if not settled
-            and gr
-            and gr <= 1
+    -- A lost packet / very early settlement callback can occur.
+    -- Retry the SAME exact server command once only if nothing changed.
+    if not voteAccepted
+        and not teleported
+        and settlementDetected()
+    then
+        settlementLog(
+            "NATIVE_REPLAY no acknowledgement; retry once."
+        )
+
+        pcall(function()
+            gameRoundRE:
+                FireServer(
+                    command
+                )
+        end)
+    end
+
+    local deadline =
+        os.clock() + 12
+
+    while os.clock()
+        < deadline
+    do
+        local teleportAttr =
+            LocalPlayer:
+                GetAttribute(
+                    "IsTeleporting"
+                )
+
+        if teleported
+            or (
+                teleportAttr ~= nil
+                and teleportAttr ~= false
+            )
         then
             pcall(function()
                 conn:Disconnect()
             end)
 
             settlementLog(
-                "PLAY_AGAIN same-place reset detected; reloading bootstrap."
+                "NATIVE_REPLAY teleport started target="
+                    .. tostring(
+                        teleportAttr
+                    )
+            )
+
+            return true,
+                "NATIVE_REPLAY_TELEPORT"
+        end
+
+        -- Some implementations reset/reuse the same Place/Job without
+        -- a conventional Roblox teleport event.
+        local settled =
+            settlementDetected()
+
+        local nowRound =
+            gameRound()
+
+        if not settled
+            and (
+                nowRound == nil
+                or nowRound <= 1
+                or (
+                    oldRound
+                    and nowRound < oldRound
+                )
+            )
+        then
+            pcall(function()
+                conn:Disconnect()
+            end)
+
+            settlementLog(
+                "NATIVE_REPLAY same-place reset detected "
+                    .. "oldRound="
+                    .. tostring(oldRound)
+                    .. " newRound="
+                    .. tostring(nowRound)
             )
 
             task.defer(function()
@@ -4332,16 +4553,20 @@ local function attemptDirectReplay(
                         game:HttpGet(
                             BASE
                                 .. "bootstrap.lua"
+                                .. "?isv=59.2&t="
+                                .. tostring(
+                                    os.time()
+                                )
                         )
                     )()
                 end
             end)
 
             return true,
-                "SAME_PLACE_RESET"
+                "NATIVE_REPLAY_SAME_PLACE"
         end
 
-        task.wait(0.12)
+        task.wait(0.10)
     end
 
     pcall(function()
@@ -4349,12 +4574,24 @@ local function attemptDirectReplay(
     end)
 
     settlementLog(
-        "PLAY_AGAIN did not start a new run."
+        "NATIVE_REPLAY timeout. "
+            .. "Votes="
+            .. tostring(
+                GameRoundCfg:
+                    GetAttribute(
+                        "VotedAgainCount"
+                    )
+            )
+            .. " Settlement="
+            .. tostring(
+                settlementDetected()
+            )
     )
 
     return false,
-        "REPLAY_TIMEOUT"
+        "NATIVE_REPLAY_TIMEOUT"
 end
+
 
 --========================================================--
 -- FINAL CHECKPOINT
