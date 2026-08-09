@@ -1,15 +1,7 @@
 --========================================================--
--- IRON SOUL KAITUN - CONTINUOUS V59
+-- IRON SOUL KAITUN - CONTINUOUS V59.1 BOOTSTRAP
 --
--- Single public loader:
--- loadstring(game:HttpGet(
---   "https://raw.githubusercontent.com/MUshihara/IronSoul-Kaitun/main/bootstrap.lua"
--- ))()
---
--- Dispatch:
---   Tutorial -> systems/tutorial.lua
---   Lobby    -> systems/lobby.lua
---   Dungeon  -> systems/combat.lua
+-- Fixes GitHub/executor source-cache + invisible-prefix compile issues.
 --========================================================--
 
 getgenv().IronSoulConfig =
@@ -35,7 +27,7 @@ end
 
 local BASE =
     "https://raw.githubusercontent.com/"
-    .. "MUshihara/IronSoul-Kaitun/main/"
+    .. "MUshihara/ironsoulkaitun/main/"
 
 local TUTORIAL_PLACE_ID =
     76701861705540
@@ -43,19 +35,179 @@ local TUTORIAL_PLACE_ID =
 local LOBBY_PLACE_ID =
     117533937949084
 
+local VERSION =
+    "59.1"
+
+local fetchCounter = 0
+
+local function cacheBust(path)
+    fetchCounter += 1
+
+    return BASE
+        .. path
+        .. "?isv="
+        .. VERSION
+        .. "&n="
+        .. tostring(fetchCounter)
+        .. "&t="
+        .. tostring(os.time())
+end
+
+local function normalizeSource(source)
+    if type(source) ~= "string" then
+        return source
+    end
+
+    -- UTF-8 BOM
+    if string.sub(source, 1, 3)
+        == "\239\187\191"
+    then
+        source =
+            string.sub(
+                source,
+                4
+            )
+    end
+
+    -- UTF-16 BOMs should never be returned by GitHub raw, but explicitly
+    -- reject them instead of letting loadstring produce a misleading
+    -- line-1 parser error.
+    local b1 =
+        string.byte(source, 1)
+
+    local b2 =
+        string.byte(source, 2)
+
+    if (
+        b1 == 255
+        and b2 == 254
+    )
+        or (
+            b1 == 254
+            and b2 == 255
+        )
+    then
+        return nil,
+            "UTF-16 source received"
+    end
+
+    -- Remove common zero-width UTF-8 prefixes if an executor/network layer
+    -- somehow prepends one.
+    local prefixes = {
+        "\226\128\139", -- zero width space
+        "\226\128\140",
+        "\226\128\141",
+        "\226\129\160",
+    }
+
+    local changed = true
+
+    while changed do
+        changed = false
+
+        for _, prefix in ipairs(
+            prefixes
+        ) do
+            if string.sub(
+                source,
+                1,
+                #prefix
+            ) == prefix
+            then
+                source =
+                    string.sub(
+                        source,
+                        #prefix + 1
+                    )
+
+                changed = true
+            end
+        end
+    end
+
+    return source
+end
+
+local function sourceHead(source)
+    if type(source) ~= "string" then
+        return tostring(source)
+    end
+
+    local head =
+        string.sub(
+            source,
+            1,
+            120
+        )
+
+    head =
+        string.gsub(
+            head,
+            "\r",
+            "\\r"
+        )
+
+    head =
+        string.gsub(
+            head,
+            "\n",
+            "\\n"
+        )
+
+    return head
+end
+
+local function sourceBytes(source)
+    if type(source) ~= "string" then
+        return "not-string"
+    end
+
+    local bytes = {}
+
+    for i = 1,
+        math.min(
+            12,
+            #source
+        )
+    do
+        table.insert(
+            bytes,
+            tostring(
+                string.byte(
+                    source,
+                    i
+                )
+            )
+        )
+    end
+
+    return table.concat(
+        bytes,
+        ","
+    )
+end
+
 local function loadRaw(path)
+    local url =
+        cacheBust(path)
+
+    print(
+        "[IronSoul V59.1] Fetching "
+            .. tostring(path)
+    )
+
     local ok, source =
         pcall(
             game.HttpGet,
             game,
-            BASE .. path
+            url
         )
 
     if not ok
         or type(source) ~= "string"
     then
         warn(
-            "[IronSoul V59] HTTP load failed: "
+            "[IronSoul V59.1] HTTP load failed: "
                 .. tostring(path)
                 .. " | "
                 .. tostring(source)
@@ -64,15 +216,57 @@ local function loadRaw(path)
         return false
     end
 
+    local normalized,
+        normalizeErr =
+            normalizeSource(
+                source
+            )
+
+    if not normalized then
+        warn(
+            "[IronSoul V59.1] Source normalization failed: "
+                .. tostring(path)
+                .. " | "
+                .. tostring(
+                    normalizeErr
+                )
+        )
+
+        return false
+    end
+
+    source =
+        normalized
+
+    print(
+        "[IronSoul V59.1] Source "
+            .. tostring(path)
+            .. " length="
+            .. tostring(#source)
+            .. " bytes=["
+            .. sourceBytes(source)
+            .. "]"
+    )
+
     local fn, err =
         loadstring(source)
 
     if not fn then
         warn(
-            "[IronSoul V59] Compile failed: "
+            "[IronSoul V59.1] Compile failed: "
                 .. tostring(path)
                 .. " | "
                 .. tostring(err)
+        )
+
+        warn(
+            "[IronSoul V59.1] SOURCE_HEAD="
+                .. sourceHead(source)
+        )
+
+        warn(
+            "[IronSoul V59.1] FIRST_BYTES="
+                .. sourceBytes(source)
         )
 
         return false
@@ -83,7 +277,7 @@ local function loadRaw(path)
 
     if not runOk then
         warn(
-            "[IronSoul V59] Runtime failed: "
+            "[IronSoul V59.1] Runtime failed: "
                 .. tostring(path)
                 .. " | "
                 .. tostring(result)
@@ -94,6 +288,15 @@ local function loadRaw(path)
 
     return true,
         result
+end
+
+local function bootstrapURL()
+    return BASE
+        .. "bootstrap.lua"
+        .. "?isv="
+        .. VERSION
+        .. "&t="
+        .. tostring(os.time())
 end
 
 local function queueBootstrap(reason)
@@ -108,7 +311,7 @@ local function queueBootstrap(reason)
         ~= "function"
     then
         warn(
-            "[IronSoul V59] queue_on_teleport unavailable: "
+            "[IronSoul V59.1] queue_on_teleport unavailable: "
                 .. tostring(reason)
         )
 
@@ -127,8 +330,13 @@ getgenv().IronSoulConfig =
         HEADLESS = %s,
     }
 
+local url =
+    %q
+    .. "?isv=59.1&t="
+    .. tostring(os.time())
+
 loadstring(
-    game:HttpGet(%q)
+    game:HttpGet(url)
 )()
 ]],
         tostring(
@@ -147,7 +355,8 @@ loadstring(
             Config.HEADLESS
             ~= false
         ),
-        BASE .. "bootstrap.lua"
+        BASE
+            .. "bootstrap.lua"
     )
 
     local ok, err =
@@ -158,7 +367,7 @@ loadstring(
 
     if not ok then
         warn(
-            "[IronSoul V59] queue failed: "
+            "[IronSoul V59.1] queue failed: "
                 .. tostring(reason)
                 .. " | "
                 .. tostring(err)
@@ -232,7 +441,7 @@ then
         "systems/combat.lua"
 else
     warn(
-        "[IronSoul V59] Unknown place; no action. PlaceId="
+        "[IronSoul V59.1] Unknown place; no action. PlaceId="
             .. tostring(
                 game.PlaceId
             )
@@ -249,14 +458,14 @@ else
 end
 
 getgenv().IronSoulRuntime = {
-    Version = "V59",
+    Version = "V59.1",
     Route = route,
     PlaceId = game.PlaceId,
     StartedAt = os.clock(),
 }
 
 print(
-    "[IronSoul V59] Route="
+    "[IronSoul V59.1] Route="
         .. route
         .. " PlaceId="
         .. tostring(
