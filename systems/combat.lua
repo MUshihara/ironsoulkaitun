@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - TELEMETRY BUG-FINDING COMBAT V60.8
+-- IRON SOUL - OPEN-GATE ENEMY-FRONTIER COMBAT V60.9
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -152,6 +152,13 @@ local CFG = {
     TELEMETRY_HEARTBEAT = 2.0,
     TELEMETRY_STALL_AFTER = 7.0,
     TELEMETRY_FULL_EVERY = 6.0,
+
+    -- GATE recovery:
+    -- If the expected completed-round gate is ALREADY server-open, and
+    -- real next-room enemies have spawned nearby, combat wins immediately.
+    GATE_OPEN_NEAR_DISTANCE = 45,
+    GATE_ENEMY_RECOVERY_RADIUS = 190,
+    GATE_NO_EXPECTED_ENEMY_RADIUS = 120,
 
     -- Only the exact RoundDoor.Portal can be used, never Workspace.Portal.
     SECTION_PORTAL_NEAR_DISTANCE = 85,
@@ -1226,6 +1233,150 @@ local function nearestSpatialEnemy(
     return best,
         bestDist
 end
+
+getgenv().IronSoulLockRegionToEnemy =
+    function(enemy, reason)
+        if not enemy then
+            return nil
+        end
+
+        local eroot =
+            modelRoot(enemy)
+
+        if not eroot then
+            return nil
+        end
+
+        local region,
+            dist =
+                nearestWakeRegion(
+                    eroot.Position
+                )
+
+        if region then
+            CurrentCombatRegion =
+                region
+
+            CurrentCombatRound =
+                gameRound()
+
+            getgenv().IronSoulNavTrace(
+                "ENEMY_REGION_LOCK reason="
+                    .. tostring(reason)
+                    .. " enemy="
+                    .. tostring(
+                        enemy.Name
+                    )
+                    .. " region="
+                    .. fullName(region)
+                    .. " enemyRegionDist="
+                    .. string.format(
+                        "%.1f",
+                        dist
+                    )
+            )
+
+            if getgenv().IronSoulTelemetry then
+                getgenv().IronSoulTelemetry:
+                    Event(
+                        "ENEMY_REGION_LOCK",
+                        "reason="
+                            .. tostring(reason)
+                            .. " enemy="
+                            .. tostring(
+                                enemy.Name
+                            )
+                            .. " region="
+                            .. fullName(region)
+                            .. " dist="
+                            .. string.format(
+                                "%.1f",
+                                dist
+                            )
+                    )
+            end
+        end
+
+        return region,
+            dist
+    end
+
+getgenv().IronSoulExpectedGateStatus =
+    function(expectedRound)
+        if not Root
+            or expectedRound == nil
+        then
+            return nil,
+                nil
+        end
+
+        local nearestOpen =
+            nil
+
+        local nearestClosed =
+            nil
+
+        local openDist =
+            math.huge
+
+        local closedDist =
+            math.huge
+
+        for _, row in ipairs(
+            physicalDoorRows()
+        ) do
+            if row.RoundNum
+                == expectedRound
+                and row.PromptPos
+            then
+                local dist =
+                    (
+                        row.PromptPos
+                        - Root.Position
+                    ).Magnitude
+
+                local opened =
+                    row.Switch == 1
+                    or (
+                        row.Prompt
+                        and row.Prompt.Enabled
+                            == false
+                    )
+
+                if opened
+                    and dist < openDist
+                then
+                    nearestOpen =
+                        row
+
+                    openDist =
+                        dist
+
+                elseif not opened
+                    and dist < closedDist
+                then
+                    nearestClosed =
+                        row
+
+                    closedDist =
+                        dist
+                end
+            end
+        end
+
+        if nearestOpen then
+            nearestOpen.PlayerDistance =
+                openDist
+        end
+
+        if nearestClosed then
+            nearestClosed.PlayerDistance =
+                closedDist
+        end
+
+        return nearestOpen,
+            nearestClosed
+    end
 
 local function spatialLiveEnemyCount(
     radius
@@ -4606,6 +4757,9 @@ do
                             nearestWakeRegion =
                                 nearestWakeRegion,
 
+                            roundWakeFolder =
+                                roundWakeFolder,
+
                             boxDistance =
                                 boxDistance,
 
@@ -4788,6 +4942,24 @@ while not stopReason do
         local roundToGate =
             nowRound - 1
 
+        if getgenv().IronSoulTelemetry then
+            getgenv().IronSoulTelemetry:
+                Event(
+                    "ROUND_CHANGE",
+                    tostring(
+                        lastRound
+                    )
+                        .. "->"
+                        .. tostring(
+                            nowRound
+                        )
+                        .. " state="
+                        .. tostring(
+                            state
+                        )
+                )
+        end
+
         lastRound =
             nowRound
 
@@ -4858,9 +5030,11 @@ while not stopReason do
                     enemy =
                         spatialEnemy
 
-                    -- Re-lock toward this area's nearest combat volume, but
-                    -- do not require that volume to be correct before fighting.
-                    lockRegion(
+                    -- Re-lock using the enemy's position, not the player's.
+                    -- Using the player position could keep the old room lock
+                    -- after a newly spawned next-room wave appeared ahead.
+                    getgenv().IronSoulLockRegionToEnemy(
+                        spatialEnemy,
                         "SPATIAL_ENEMY_RECOVERY"
                     )
 
@@ -5614,6 +5788,120 @@ while not stopReason do
 
                 pendingGateRound =
                     nil
+            end
+
+            --==================================================--
+            -- V60.9 OPEN-GATE / ENEMY-FRONTIER RECOVERY
+            --
+            -- D4 telemetry proved this state:
+            --   GameRound=3, CompletedRound=2
+            --   nearest Round2 gate Switch=1 / prompt disabled at 6 studs
+            --   5 live next-room enemies already spawned 93-148 studs away
+            --
+            -- Waiting in GATE is wrong there. The gate is already finished.
+            -- Use the live enemy spawn to identify the next room and resume
+            -- COMBAT without touching another portal/gate.
+            --==================================================--
+
+            local gateEnemy,
+                gateEnemyDist =
+                    nearestSpatialEnemy(
+                        CFG.GATE_ENEMY_RECOVERY_RADIUS
+                    )
+
+            if gateEnemy then
+                local openExpected,
+                    closedExpected =
+                        getgenv().IronSoulExpectedGateStatus(
+                            completedRound
+                        )
+
+                local expectedAlreadyOpen =
+                    openExpected
+                    and openExpected.PlayerDistance
+                        <= CFG.GATE_OPEN_NEAR_DISTANCE
+
+                local noUsableExpected =
+                    not closedExpected
+                    and gateEnemyDist
+                        <= CFG.GATE_NO_EXPECTED_ENEMY_RADIUS
+
+                if expectedAlreadyOpen
+                    or noUsableExpected
+                then
+                    if getgenv().IronSoulTelemetry then
+                        getgenv().IronSoulTelemetry:
+                            Event(
+                                "GATE_TO_ENEMY",
+                                "completed="
+                                    .. tostring(
+                                        completedRound
+                                    )
+                                    .. " enemy="
+                                    .. tostring(
+                                        gateEnemy.Name
+                                    )
+                                    .. " enemyDist="
+                                    .. string.format(
+                                        "%.1f",
+                                        gateEnemyDist
+                                    )
+                                    .. " openExpectedDist="
+                                    .. tostring(
+                                        openExpected
+                                        and openExpected.PlayerDistance
+                                    )
+                                    .. " closedExpectedDist="
+                                    .. tostring(
+                                        closedExpected
+                                        and closedExpected.PlayerDistance
+                                    )
+                            )
+                    end
+
+                    getgenv().IronSoulNavTrace(
+                        "GATE_TO_ENEMY completed="
+                            .. tostring(
+                                completedRound
+                            )
+                            .. " enemy="
+                            .. tostring(
+                                gateEnemy.Name
+                            )
+                            .. " dist="
+                            .. string.format(
+                                "%.1f",
+                                gateEnemyDist
+                            )
+                    )
+
+                    state =
+                        "COMBAT"
+
+                    CurrentState =
+                        state
+
+                    completedRound =
+                        nil
+
+                    pendingGateRound =
+                        nil
+
+                    noLocalEnemySince =
+                        nil
+
+                    getgenv().IronSoulAdaptiveGateState.EnteredAt =
+                        nil
+
+                    getgenv().IronSoulLockRegionToEnemy(
+                        gateEnemy,
+                        "GATE_ALREADY_OPEN"
+                    )
+
+                    task.wait(0.08)
+
+                    continue
+                end
             end
 
             if os.clock()
