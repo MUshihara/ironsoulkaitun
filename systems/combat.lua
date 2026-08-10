@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - OPEN-GATE ENEMY-FRONTIER COMBAT V60.9.1
+-- IRON SOUL - ADAPTIVE COMBAT + FAST GATES V61.0
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -159,6 +159,36 @@ local CFG = {
     GATE_OPEN_NEAR_DISTANCE = 45,
     GATE_ENEMY_RECOVERY_RADIUS = 190,
     GATE_NO_EXPECTED_ENEMY_RADIUS = 120,
+
+    -- Evidence-driven gate timing. Old builds could spend ~30 sec at an
+    -- ordinary gate waiting for a section portal that did not exist.
+    DOOR_FAST_PROGRESS_CHECK = 1.35,
+    DOOR_SECTION_PORTAL_WAIT = 3.50,
+    DOOR_NEW_REGION_WAIT = 2.25,
+    DOOR_SECTION_PORTAL_RETRY_WAIT = 3.50,
+
+    -- Adaptive combat position.
+    ADAPTIVE_COMBAT_POSITION = true,
+    ADAPTIVE_PLAYER_HIT_EPSILON = 0.25,
+    ADAPTIVE_EVADE_HOLD = 1.35,
+    ADAPTIVE_REPEAT_HIT_WINDOW = 3.0,
+    ADAPTIVE_NO_TARGET_DAMAGE = 1.65,
+    ADAPTIVE_RETURN_STABLE = 0.65,
+
+    ADAPTIVE_DEFAULT_HEIGHT = 9.0,
+    ADAPTIVE_DEFAULT_OFFSET = 1.50,
+
+    ADAPTIVE_EVADE_HEIGHT = 8.5,
+    ADAPTIVE_EVADE_OFFSET = 4.0,
+    ADAPTIVE_EVADE_YAW = 82,
+
+    ADAPTIVE_WIDE_HEIGHT = 7.0,
+    ADAPTIVE_WIDE_OFFSET = 5.0,
+    ADAPTIVE_WIDE_YAW = 118,
+
+    -- Verified close-recovery position when our hits are not registering.
+    ADAPTIVE_RECOVERY_HEIGHT = 5.5,
+    ADAPTIVE_RECOVERY_OFFSET = 1.0,
 
     -- Only the exact RoundDoor.Portal can be used, never Workspace.Portal.
     SECTION_PORTAL_NEAR_DISTANCE = 85,
@@ -1600,6 +1630,83 @@ local function trackElevationDamage(enemy)
     end
 end
 
+--========================================================--
+-- V61.0 ADAPTIVE COMBAT POSITION
+--
+-- Separate module to avoid increasing combat.lua's local-register load.
+--========================================================--
+
+getgenv().IronSoulCombatPosition =
+    nil
+
+do
+    local loadRaw =
+        getgenv().IronSoulLoadRaw
+
+    if CFG.ADAPTIVE_COMBAT_POSITION
+        and type(loadRaw)
+            == "function"
+    then
+        local ok, factory =
+            loadRaw(
+                "systems/combat_position.lua"
+            )
+
+        if ok
+            and type(factory)
+                == "function"
+        then
+            local builtOk,
+                built =
+                    pcall(
+                        factory,
+                        {
+                            CFG = CFG,
+
+                            event =
+                                function(name, detail)
+                                    local telemetry =
+                                        getgenv().IronSoulTelemetry
+
+                                    if telemetry then
+                                        telemetry:
+                                            Event(
+                                                name,
+                                                detail
+                                            )
+                                    end
+
+                                    getgenv().IronSoulNavTrace(
+                                        tostring(name)
+                                            .. " "
+                                            .. tostring(
+                                                detail
+                                                or ""
+                                            )
+                                    )
+                                end,
+                        }
+                    )
+
+            if builtOk
+                and type(built)
+                    == "table"
+            then
+                getgenv().IronSoulCombatPosition =
+                    built
+            else
+                combatLog(
+                    "ADAPTIVE_POSITION_INIT_FAILED"
+                )
+            end
+        else
+            combatLog(
+                "ADAPTIVE_POSITION_LOAD_FAILED"
+            )
+        end
+    end
+end
+
 local function horizontalUnitFromEnemy(eroot)
     if not Root
         or not eroot
@@ -1647,18 +1754,65 @@ local function moveNear(enemy)
         return false
     end
 
+    local adaptive =
+        getgenv().IronSoulCombatPosition
+
+    local movement =
+        adaptive
+        and adaptive:
+            GetMovement()
+        or nil
+
     local height =
-        currentCombatHeight()
+        movement
+        and movement.Height
+        or currentCombatHeight()
 
     local horizontal =
-        height > 0
-        and CFG.ELEVATED_HORIZONTAL_OFFSET
-        or CFG.TARGET_DISTANCE
+        movement
+        and movement.Offset
+        or (
+            height > 0
+            and CFG.ELEVATED_HORIZONTAL_OFFSET
+            or CFG.TARGET_DISTANCE
+        )
 
     local dir =
         horizontalUnitFromEnemy(
             eroot
         )
+
+    if movement
+        and tonumber(
+            movement.Yaw
+        )
+        and movement.Yaw ~= 0
+    then
+        local angle =
+            math.rad(
+                movement.Yaw
+            )
+
+        local cosA =
+            math.cos(angle)
+
+        local sinA =
+            math.sin(angle)
+
+        dir =
+            Vector3.new(
+                dir.X * cosA
+                    - dir.Z * sinA,
+                0,
+                dir.X * sinA
+                    + dir.Z * cosA
+            )
+
+        if dir.Magnitude > 0.01 then
+            dir =
+                dir.Unit
+        end
+    end
 
     local goal =
         eroot.Position
@@ -3603,12 +3757,115 @@ local function openAndCrossSelectedDoor(
         task.wait(0.14)
     end
 
-    -- Section-ending doors have RoundDoor.Portal just beyond them.
+    local oldRegion =
+        region
+
+    -- V61.0 FAST PROGRESS CHECK:
+    -- ordinary gates frequently spawn the next enemies / room immediately.
+    -- Do not spend a long portal timeout before checking that evidence.
+    local quickStarted =
+        os.clock()
+
+    while os.clock()
+        - quickStarted
+        < CFG.DOOR_FAST_PROGRESS_CHECK
+    do
+        if settlementDetected() then
+            return true,
+                "SETTLEMENT"
+        end
+
+        local candidate,
+            regionDist =
+                nearestWakeRegion(
+                    Root.Position
+                )
+
+        if candidate
+            and candidate ~= oldRegion
+            and regionDist <= 25
+        then
+            CurrentCombatRegion =
+                candidate
+
+            CurrentCombatRound =
+                gameRound()
+
+            if getgenv().IronSoulTelemetry then
+                getgenv().IronSoulTelemetry:
+                    Event(
+                        "DOOR_FAST_REGION",
+                        fullName(candidate)
+                    )
+            end
+
+            return true,
+                "NEW_REGION_FAST"
+        end
+
+        local enemy,
+            enemyDist =
+                nearestSpatialEnemy(
+                    CFG.GATE_ENEMY_RECOVERY_RADIUS
+                )
+
+        if enemy then
+            local enemyRegion,
+                enemyRegionDist =
+                    nearestWakeRegion(
+                        modelRoot(enemy).Position
+                    )
+
+            if enemyRegion
+                and enemyRegion ~= oldRegion
+                and enemyRegionDist <= 75
+            then
+                getgenv().IronSoulLockRegionToEnemy(
+                    enemy,
+                    "DOOR_FAST_ENEMY"
+                )
+
+                if getgenv().IronSoulTelemetry then
+                    getgenv().IronSoulTelemetry:
+                        Event(
+                            "DOOR_FAST_ENEMY",
+                            tostring(
+                                enemy.Name
+                            )
+                                .. " dist="
+                                .. string.format(
+                                    "%.1f",
+                                    enemyDist
+                                )
+                        )
+                end
+
+                return true,
+                    "ENEMY_FRONTIER_FAST"
+            end
+        end
+
+        task.wait(0.08)
+    end
+
+    -- Only now wait briefly for a section portal.
+    if getgenv().IronSoulTelemetry then
+        getgenv().IronSoulTelemetry:
+            Event(
+                "DOOR_PORTAL_WAIT",
+                "primary="
+                    .. tostring(
+                        CFG.DOOR_SECTION_PORTAL_WAIT
+                    )
+            )
+    end
+
     local portalUsed,
         portalResult =
             maybeEnterSectionPortal(
-                region,
-                outward
+                oldRegion,
+                outward,
+                CFG.DOOR_SECTION_PORTAL_WAIT
             )
 
     if portalUsed then
@@ -3616,10 +3873,7 @@ local function openAndCrossSelectedDoor(
             portalResult
     end
 
-    -- Determine the new room only AFTER gate crossing.
-    local oldRegion =
-        region
-
+    -- Short room wait after portal check.
     local newRegion =
         waitUntil(
             function()
@@ -3647,7 +3901,7 @@ local function openAndCrossSelectedDoor(
                     return candidate
                 end
             end,
-            CFG.DOOR_CROSS_TIMEOUT,
+            CFG.DOOR_NEW_REGION_WAIT,
             0.08
         )
 
@@ -3685,11 +3939,22 @@ local function openAndCrossSelectedDoor(
     -- Final/section portals can stream or relocate AFTER the ordinary
     -- new-region timeout. Give the exact portal one more handshake while
     -- gate ownership is still frozen.
+    if getgenv().IronSoulTelemetry then
+        getgenv().IronSoulTelemetry:
+            Event(
+                "DOOR_PORTAL_RETRY",
+                tostring(
+                    CFG.DOOR_SECTION_PORTAL_RETRY_WAIT
+                )
+            )
+    end
+
     local retryPortal,
         retryResult =
             maybeEnterSectionPortal(
                 oldRegion,
-                outward
+                outward,
+                CFG.DOOR_SECTION_PORTAL_RETRY_WAIT
             )
 
     if retryPortal then
@@ -4535,6 +4800,16 @@ local function fightEnemy(enemy)
         enemy
     )
 
+    if getgenv().IronSoulCombatPosition then
+        getgenv().IronSoulCombatPosition:
+            ResetTarget(
+                enemy,
+                enemyHealth(enemy),
+                Humanoid
+                and Humanoid.Health
+            )
+    end
+
     while enemyAlive(enemy) do
         if settlementDetected() then
             return "SETTLEMENT"
@@ -4576,12 +4851,26 @@ local function fightEnemy(enemy)
             return "REACQUIRE"
         end
 
+        if getgenv().IronSoulCombatPosition then
+            getgenv().IronSoulCombatPosition:
+                Update(
+                    enemy,
+                    enemyHealth(enemy),
+                    Humanoid
+                    and Humanoid.Health
+                )
+        end
+
         moveNear(enemy)
         face(enemy)
 
-        trackElevationDamage(
-            enemy
-        )
+        -- Keep the proven V55.4 elevation recovery as fallback only when the
+        -- adaptive position module is unavailable.
+        if not getgenv().IronSoulCombatPosition then
+            trackElevationDamage(
+                enemy
+            )
+        end
 
         if Callbacks.Skill2
             and skillReady("Skill2")
@@ -4831,6 +5120,21 @@ do
 
                             settlementDetected =
                                 settlementDetected,
+
+                            getHumanoid =
+                                function()
+                                    return Humanoid
+                                end,
+
+                            getCombatProfile =
+                                function()
+                                    local controller =
+                                        getgenv().IronSoulCombatPosition
+
+                                    return controller
+                                        and controller:
+                                            GetState()
+                                end,
                         }
                     )
 
