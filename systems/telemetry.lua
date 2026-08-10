@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - ROUTE-GUIDED TELEMETRY V61.2
+-- IRON SOUL - OPEN-GATE TELEMETRY V61.3
 --========================================================--
 
 return function(D)
@@ -19,10 +19,10 @@ return function(D)
     local started = false
 
     local TRACE_FILE =
-        "IronSoul_Telemetry_V61_2.txt"
+        "IronSoul_Telemetry_V61_3.txt"
 
     local STATE_FILE =
-        "IronSoul_LastState_V61_2.txt"
+        "IronSoul_LastState_V61_3.txt"
 
     local function sv(v)
         if v == nil then
@@ -397,7 +397,7 @@ return function(D)
         end)
 
         local lines = {
-            "Version=V61.2",
+            "Version=V61.3",
             "Label="
                 .. sv(label),
             "State="
