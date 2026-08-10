@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - EMPTY-CORRIDOR-SAFE TRANSITION MODULE V60.7
+-- IRON SOUL - NATIVE-MOTION TRANSITION MODULE V61.1
 --
 -- Factory module used by systems/combat.lua.
 --
@@ -12,6 +12,11 @@ return function(D)
 
     local Players =
         D.Players
+
+    local RunService =
+        game:GetService(
+            "RunService"
+        )
 
     local LocalPlayer =
         D.LocalPlayer
@@ -42,6 +47,9 @@ return function(D)
 
     local portalLog =
         D.portalLog
+
+    local event =
+        D.event
 
     local firetouchinterest =
         D.firetouchinterest
@@ -101,6 +109,340 @@ return function(D)
 
     function Resolver:RoomClearedVisible()
         return roomClearedVisible()
+    end
+
+    local function emit(
+        name,
+        detail
+    )
+        if type(event)
+            == "function"
+        then
+            pcall(
+                event,
+                name,
+                detail
+            )
+        end
+
+        portalLog(
+            tostring(name)
+                .. " "
+                .. tostring(
+                    detail
+                    or ""
+                )
+        )
+    end
+
+    function Resolver:PulseNativeMovement(
+        oldRegion,
+        preferred,
+        reason
+    )
+        local root =
+            Root()
+
+        if not root
+            or not root.Parent
+        then
+            return false,
+                "NO_ROOT"
+        end
+
+        local character =
+            LocalPlayer.Character
+
+        local humanoid =
+            character
+            and character:
+                FindFirstChildOfClass(
+                    "Humanoid"
+                )
+
+        if not humanoid
+            or humanoid.Health <= 0
+        then
+            return false,
+                "NO_HUMANOID"
+        end
+
+        local beforePos =
+            root.Position
+
+        local forward =
+            preferred
+
+        if not forward
+            or forward.Magnitude < 0.1
+        then
+            forward =
+                root.CFrame.LookVector
+        end
+
+        forward =
+            Vector3.new(
+                forward.X,
+                0,
+                forward.Z
+            )
+
+        if forward.Magnitude < 0.1 then
+            forward =
+                Vector3.new(
+                    0,
+                    0,
+                    -1
+                )
+        else
+            forward =
+                forward.Unit
+        end
+
+        local right =
+            Vector3.new(
+                -forward.Z,
+                0,
+                forward.X
+            )
+
+        local directions = {
+            forward,
+            right,
+            -right,
+            -forward,
+        }
+
+        emit(
+            "NATIVE_MOVE_START",
+            "reason="
+                .. tostring(reason)
+                .. " pos="
+                .. tostring(
+                    beforePos
+                )
+                .. " region="
+                .. tostring(
+                    oldRegion
+                    and fullName(
+                        oldRegion
+                    )
+                )
+        )
+
+        local maxDirections =
+            math.min(
+                tonumber(
+                    CFG.NATIVE_MOTION_MAX_DIRECTIONS
+                )
+                or 4,
+                #directions
+            )
+
+        for i = 1,
+            maxDirections
+        do
+            if not root.Parent
+                or humanoid.Health <= 0
+            then
+                return false,
+                    "CHARACTER_CHANGED"
+            end
+
+            local dir =
+                directions[i]
+
+            local pulseStart =
+                os.clock()
+
+            -- Real Humanoid movement rather than CFrame repositioning.
+            -- Repeat per Heartbeat so MoveDirection/physics/touch state is
+            -- genuinely updated for several simulation frames.
+            while os.clock()
+                - pulseStart
+                < (
+                    tonumber(
+                        CFG.NATIVE_MOTION_STEP_TIME
+                    )
+                    or 0.11
+                )
+            do
+                humanoid:
+                    Move(
+                        dir,
+                        false
+                    )
+
+                RunService.Heartbeat:
+                    Wait()
+
+                local evidence =
+                    transitionEvidence(
+                        beforePos,
+                        oldRegion,
+                        false
+                    )
+
+                if evidence then
+                    humanoid:
+                        Move(
+                            Vector3.zero,
+                            false
+                        )
+
+                    emit(
+                        "NATIVE_MOVE_SUCCESS",
+                        "reason="
+                            .. tostring(reason)
+                            .. " dir="
+                            .. tostring(i)
+                            .. " result="
+                            .. tostring(
+                                evidence
+                            )
+                            .. " pos="
+                            .. tostring(
+                                root.Position
+                            )
+                    )
+
+                    return true,
+                        "NATIVE_MOVE_"
+                            .. tostring(
+                                evidence
+                            )
+                end
+            end
+
+            humanoid:
+                Move(
+                    Vector3.zero,
+                    false
+                )
+
+            task.wait(
+                tonumber(
+                    CFG.NATIVE_MOTION_SETTLE
+                )
+                or 0.10
+            )
+
+            local evidence =
+                transitionEvidence(
+                    beforePos,
+                    oldRegion,
+                    false
+                )
+
+            if evidence then
+                emit(
+                    "NATIVE_MOVE_SUCCESS",
+                    "reason="
+                        .. tostring(reason)
+                        .. " dir="
+                        .. tostring(i)
+                        .. " result="
+                        .. tostring(
+                            evidence
+                        )
+                        .. " pos="
+                        .. tostring(
+                            root.Position
+                        )
+                )
+
+                return true,
+                    "NATIVE_MOVE_"
+                        .. tostring(
+                            evidence
+                        )
+            end
+        end
+
+        -- Some controllers ignore Humanoid:Move when input ownership is in
+        -- an unusual state. Use a tiny physical MoveTo as a safe fallback,
+        -- still without keyboard simulation or CFrame teleporting.
+        local fallbackDistance =
+            tonumber(
+                CFG.NATIVE_MOTION_MOVETO_FALLBACK
+            )
+            or 2.0
+
+        if fallbackDistance > 0
+            and root.Parent
+            and humanoid.Health > 0
+        then
+            local target =
+                root.Position
+                + forward
+                    * fallbackDistance
+
+            pcall(
+                humanoid.MoveTo,
+                humanoid,
+                target
+            )
+
+            local untilTime =
+                os.clock() + 0.28
+
+            while os.clock()
+                < untilTime
+            do
+                RunService.Heartbeat:
+                    Wait()
+
+                local evidence =
+                    transitionEvidence(
+                        beforePos,
+                        oldRegion,
+                        false
+                    )
+
+                if evidence then
+                    emit(
+                        "NATIVE_MOVETO_SUCCESS",
+                        "reason="
+                            .. tostring(reason)
+                            .. " result="
+                            .. tostring(
+                                evidence
+                            )
+                            .. " pos="
+                            .. tostring(
+                                root.Position
+                            )
+                    )
+
+                    return true,
+                        "NATIVE_MOVETO_"
+                            .. tostring(
+                                evidence
+                            )
+                end
+            end
+        end
+
+        emit(
+            "NATIVE_MOVE_NO_TRANSITION",
+            "reason="
+                .. tostring(reason)
+                .. " moved="
+                .. string.format(
+                    "%.2f",
+                    (
+                        root.Position
+                        - beforePos
+                    ).Magnitude
+                )
+                .. " pos="
+                .. tostring(
+                    root.Position
+                )
+        )
+
+        return false,
+            "NATIVE_MOVE_NO_TRANSITION"
     end
 
     local function transitionEvidence(
