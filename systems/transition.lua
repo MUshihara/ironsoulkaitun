@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - NATIVE-MOTION TRANSITION MODULE V61.1
+-- IRON SOUL - NATIVE-MOTION TRANSITION MODULE V61.1.1
 --
 -- Factory module used by systems/combat.lua.
 --
@@ -110,6 +110,11 @@ return function(D)
     function Resolver:RoomClearedVisible()
         return roomClearedVisible()
     end
+
+    -- Forward declaration:
+    -- PulseNativeMovement() calls transitionEvidence(), so this symbol must
+    -- exist in the lexical scope BEFORE PulseNativeMovement is created.
+    local transitionEvidence
 
     local function emit(
         name,
@@ -445,7 +450,7 @@ return function(D)
             "NATIVE_MOVE_NO_TRANSITION"
     end
 
-    local function transitionEvidence(
+    transitionEvidence = function(
         beforePos,
         oldRegion,
         wasRoomCleared
