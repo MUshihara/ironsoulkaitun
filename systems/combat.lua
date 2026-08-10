@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - ADAPTIVE COMBAT + FAST GATES V61.0
+-- IRON SOUL - NATIVE-MOTION TRANSITION COMBAT V61.1
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -166,6 +166,14 @@ local CFG = {
     DOOR_SECTION_PORTAL_WAIT = 3.50,
     DOOR_NEW_REGION_WAIT = 2.25,
     DOOR_SECTION_PORTAL_RETRY_WAIT = 3.50,
+
+    -- Some transition triggers require genuine Humanoid movement.
+    -- CFrame/touch alone can leave the character frozen at the checkpoint.
+    NATIVE_MOTION_PULSE = true,
+    NATIVE_MOTION_STEP_TIME = 0.11,
+    NATIVE_MOTION_SETTLE = 0.10,
+    NATIVE_MOTION_MAX_DIRECTIONS = 4,
+    NATIVE_MOTION_MOVETO_FALLBACK = 2.0,
 
     -- Adaptive combat position.
     ADAPTIVE_COMBAT_POSITION = true,
@@ -3432,6 +3440,20 @@ do
 
                             portalLog =
                                 portalLog,
+
+                            event =
+                                function(name, detail)
+                                    local telemetry =
+                                        getgenv().IronSoulTelemetry
+
+                                    if telemetry then
+                                        telemetry:
+                                            Event(
+                                                name,
+                                                detail
+                                            )
+                                    end
+                                end,
                         }
                     )
 
@@ -3848,6 +3870,34 @@ local function openAndCrossSelectedDoor(
         task.wait(0.08)
     end
 
+    -- V61.1:
+    -- Before waiting on portal objects, reproduce the tiny REAL movement
+    -- that manually wakes some server-side transition/checkpoint triggers.
+    if CFG.NATIVE_MOTION_PULSE then
+        local resolver =
+            getgenv().IronSoulTransitionResolver
+
+        if resolver
+            and type(
+                resolver.PulseNativeMovement
+            ) == "function"
+        then
+            local moved,
+                moveResult =
+                    resolver:
+                        PulseNativeMovement(
+                            oldRegion,
+                            outward,
+                            "POST_DOOR"
+                        )
+
+            if moved then
+                return true,
+                    moveResult
+            end
+        end
+    end
+
     -- Only now wait briefly for a section portal.
     if getgenv().IronSoulTelemetry then
         getgenv().IronSoulTelemetry:
@@ -3962,8 +4012,34 @@ local function openAndCrossSelectedDoor(
             retryResult
     end
 
-    -- Only after both new-region and exact-portal checks fail do we
-    -- re-lock. Combat never steals control during these waits.
+    -- One final genuine movement pulse at the exact state where the user
+    -- proved manual movement wakes the transition.
+    if CFG.NATIVE_MOTION_PULSE then
+        local resolver =
+            getgenv().IronSoulTransitionResolver
+
+        if resolver
+            and type(
+                resolver.PulseNativeMovement
+            ) == "function"
+        then
+            local moved,
+                moveResult =
+                    resolver:
+                        PulseNativeMovement(
+                            oldRegion,
+                            outward,
+                            "POST_PORTAL_TIMEOUT"
+                        )
+
+            if moved then
+                return true,
+                    moveResult
+            end
+        end
+    end
+
+    -- Only after all real transition evidence fails do we re-lock.
     lockRegion(
         "POST_DOOR_FALLBACK"
     )
@@ -5549,7 +5625,76 @@ while not stopReason do
                         getgenv().IronSoulEmptyTraversalState.LastAttemptAt =
                             os.clock()
 
-                        -- PHYSICAL GATE FIRST.
+                        -- First reproduce a tiny genuine movement input.
+                        -- This is intentionally before selecting another old
+                        -- traversal gate because the current checkpoint may
+                        -- already be waiting for movement to teleport onward.
+                        local resolver =
+                            getgenv().IronSoulTransitionResolver
+
+                        if CFG.NATIVE_MOTION_PULSE
+                            and resolver
+                            and type(
+                                resolver.PulseNativeMovement
+                            ) == "function"
+                        then
+                            local moved,
+                                moveResult =
+                                    resolver:
+                                        PulseNativeMovement(
+                                            CurrentCombatRegion,
+                                            nil,
+                                            "EMPTY_CORRIDOR"
+                                        )
+
+                            if moved then
+                                portalsInvoked += 1
+
+                                writePhaseAudit(
+                                    "NATIVE_MOTION",
+                                    completedRound,
+                                    moveResult
+                                )
+
+                                getgenv().IronSoulNavTrace(
+                                    "NATIVE_MOTION result="
+                                        .. tostring(
+                                            moveResult
+                                        )
+                                        .. " Pos="
+                                        .. tostring(
+                                            Root.Position
+                                        )
+                                )
+
+                                lockRegion(
+                                    "AFTER_NATIVE_MOTION"
+                                )
+
+                                CurrentCombatRound =
+                                    gameRound()
+
+                                lastRound =
+                                    gameRound()
+                                    or lastRound
+
+                                noLocalEnemySince =
+                                    nil
+
+                                getgenv().IronSoulStagingState.NoEnemySince =
+                                    nil
+
+                                getgenv().IronSoulEmptyTraversalState.Since =
+                                    nil
+
+                                task.wait(0.22)
+
+                                continue
+                            end
+                        end
+
+                        -- If movement did NOT wake a transition, then use a
+                        -- real physical gate.
                         local corridorGate =
                             getgenv().IronSoulSelectFrontierDoor(
                                 nil
@@ -5901,6 +6046,64 @@ while not stopReason do
 
                             local resolver =
                                 getgenv().IronSoulTransitionResolver
+
+                            if CFG.NATIVE_MOTION_PULSE
+                                and resolver
+                                and type(
+                                    resolver.PulseNativeMovement
+                                ) == "function"
+                            then
+                                local pulseMoved,
+                                    pulseResult =
+                                        resolver:
+                                            PulseNativeMovement(
+                                                CurrentCombatRegion,
+                                                nil,
+                                                "STAGING"
+                                            )
+
+                                if pulseMoved then
+                                    portalsInvoked += 1
+
+                                    writePhaseAudit(
+                                        "NATIVE_MOTION_STAGING",
+                                        completedRound,
+                                        pulseResult
+                                    )
+
+                                    getgenv().IronSoulNavTrace(
+                                        "STAGING_NATIVE_MOTION result="
+                                            .. tostring(
+                                                pulseResult
+                                            )
+                                            .. " Pos="
+                                            .. tostring(
+                                                Root.Position
+                                            )
+                                    )
+
+                                    lockRegion(
+                                        "AFTER_STAGING_NATIVE_MOTION"
+                                    )
+
+                                    CurrentCombatRound =
+                                        gameRound()
+
+                                    lastRound =
+                                        gameRound()
+                                        or lastRound
+
+                                    noLocalEnemySince =
+                                        nil
+
+                                    getgenv().IronSoulStagingState.NoEnemySince =
+                                        nil
+
+                                    task.wait(0.22)
+
+                                    continue
+                                end
+                            end
 
                             local moved =
                                 false
