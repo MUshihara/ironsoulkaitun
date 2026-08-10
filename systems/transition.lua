@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - NATIVE-MOTION TRANSITION MODULE V61.1.1
+-- IRON SOUL - ROUTE-GUIDED TRANSITION MODULE V61.2
 --
 -- Factory module used by systems/combat.lua.
 --
@@ -50,6 +50,9 @@ return function(D)
 
     local event =
         D.event
+
+    local hasCombatObjective =
+        D.hasCombatObjective
 
     local firetouchinterest =
         D.firetouchinterest
@@ -553,6 +556,451 @@ return function(D)
             "DIRECT_ROUND_PORTAL_RF_DISABLED"
     end
 
+
+    local function unlockedPortalTarget()
+        local root =
+            Root()
+
+        if not root then
+            return nil
+        end
+
+        local portal =
+            exactRoundDoorPortal()
+
+        if not portal
+            or not portal.Parent
+            or not portal:IsA(
+                "BasePart"
+            )
+        then
+            return nil
+        end
+
+        local current =
+            gameRound()
+
+        local roundNum =
+            tonumber(
+                portal:
+                    GetAttribute(
+                        "RoundNum"
+                    )
+            )
+
+        -- Only physically guide toward a portal whose server condition is
+        -- already satisfied. Never walk toward a future locked portal.
+        if roundNum
+            and current
+            and roundNum >= current
+        then
+            return nil
+        end
+
+        return portal
+    end
+
+    function Resolver:GuidedWalk(
+        oldRegion,
+        reason
+    )
+        local root =
+            Root()
+
+        if not root
+            or not root.Parent
+        then
+            return false,
+                "NO_ROOT"
+        end
+
+        local character =
+            LocalPlayer.Character
+
+        local humanoid =
+            character
+            and character:
+                FindFirstChildOfClass(
+                    "Humanoid"
+                )
+
+        if not humanoid
+            or humanoid.Health <= 0
+        then
+            return false,
+                "NO_HUMANOID"
+        end
+
+        local target =
+            unlockedPortalTarget()
+
+        if not target then
+            emit(
+                "GUIDED_WALK_NO_TARGET",
+                "reason="
+                    .. tostring(reason)
+            )
+
+            return false,
+                "NO_UNLOCKED_PORTAL"
+        end
+
+        local beforePos =
+            root.Position
+
+        local beforeRound =
+            gameRound()
+
+        local startDistance =
+            (
+                target.Position
+                - root.Position
+            ).Magnitude
+
+        local bestDistance =
+            startDistance
+
+        local lastBestAt =
+            os.clock()
+
+        local lastProgressLog =
+            0
+
+        emit(
+            "GUIDED_WALK_START",
+            "reason="
+                .. tostring(reason)
+                .. " target="
+                .. fullName(target)
+                .. " targetRound="
+                .. tostring(
+                    target:
+                        GetAttribute(
+                            "RoundNum"
+                        )
+                )
+                .. " distance="
+                .. string.format(
+                    "%.1f",
+                    startDistance
+                )
+                .. " player="
+                .. tostring(
+                    root.Position
+                )
+                .. " targetPos="
+                .. tostring(
+                    target.Position
+                )
+        )
+
+        local deadline =
+            os.clock()
+            + (
+                tonumber(
+                    CFG.GUIDED_WALK_MAX_TIME
+                )
+                or 8
+            )
+
+        while os.clock()
+            < deadline
+        do
+            if not root.Parent
+                or humanoid.Health <= 0
+            then
+                return true,
+                    "CHARACTER_CHANGED"
+            end
+
+            if type(hasCombatObjective)
+                    == "function"
+            then
+                local ok, objective =
+                    pcall(
+                        hasCombatObjective
+                    )
+
+                if ok
+                    and objective
+                then
+                    humanoid:
+                        Move(
+                            Vector3.zero,
+                            false
+                        )
+
+                    emit(
+                        "GUIDED_WALK_OBJECTIVE",
+                        "reason="
+                            .. tostring(reason)
+                            .. " distance="
+                            .. string.format(
+                                "%.1f",
+                                (
+                                    target.Position
+                                    - root.Position
+                                ).Magnitude
+                            )
+                    )
+
+                    return true,
+                        "OBJECTIVE_APPEARED"
+                end
+            end
+
+            -- Re-issue MoveTo because Roblox's MoveTo can timeout on long
+            -- targets. This is real Humanoid movement, not CFrame.
+            pcall(
+                humanoid.MoveTo,
+                humanoid,
+                target.Position
+            )
+
+            task.wait(
+                tonumber(
+                    CFG.GUIDED_WALK_REISSUE
+                )
+                or 0.22
+            )
+
+            local evidence =
+                transitionEvidence(
+                    beforePos,
+                    oldRegion,
+                    false
+                )
+
+            if evidence then
+                humanoid:
+                    Move(
+                        Vector3.zero,
+                        false
+                    )
+
+                emit(
+                    "GUIDED_WALK_SUCCESS",
+                    "reason="
+                        .. tostring(reason)
+                        .. " result="
+                        .. tostring(
+                            evidence
+                        )
+                        .. " pos="
+                        .. tostring(
+                            root.Position
+                        )
+                )
+
+                return true,
+                    "GUIDED_"
+                        .. tostring(
+                            evidence
+                        )
+            end
+
+            if beforeRound
+                and gameRound()
+                and gameRound()
+                    ~= beforeRound
+            then
+                humanoid:
+                    Move(
+                        Vector3.zero,
+                        false
+                    )
+
+                emit(
+                    "GUIDED_WALK_ROUND",
+                    tostring(beforeRound)
+                        .. "->"
+                        .. tostring(
+                            gameRound()
+                        )
+                )
+
+                return true,
+                    "GAME_ROUND_CHANGED"
+            end
+
+            local distance =
+                (
+                    target.Position
+                    - root.Position
+                ).Magnitude
+
+            if distance
+                <= (
+                    tonumber(
+                        CFG.GUIDED_WALK_TARGET_RADIUS
+                    )
+                    or 7
+                )
+            then
+                -- Let a real walking/touch frame occur inside the portal.
+                humanoid:
+                    MoveTo(
+                        target.Position
+                    )
+
+                task.wait(0.25)
+
+                local finalEvidence =
+                    transitionEvidence(
+                        beforePos,
+                        oldRegion,
+                        false
+                    )
+
+                if finalEvidence then
+                    emit(
+                        "GUIDED_WALK_SUCCESS",
+                        "reason="
+                            .. tostring(reason)
+                            .. " result="
+                            .. tostring(
+                                finalEvidence
+                            )
+                    )
+
+                    return true,
+                        "GUIDED_"
+                            .. tostring(
+                                finalEvidence
+                            )
+                end
+            end
+
+            if bestDistance
+                - distance
+                >= (
+                    tonumber(
+                        CFG.GUIDED_WALK_MIN_PROGRESS
+                    )
+                    or 1
+                )
+            then
+                bestDistance =
+                    distance
+
+                lastBestAt =
+                    os.clock()
+            end
+
+            if os.clock()
+                    - lastProgressLog
+                    >= (
+                        tonumber(
+                            CFG.GUIDED_WALK_PROGRESS_LOG
+                        )
+                        or 1
+                    )
+            then
+                lastProgressLog =
+                    os.clock()
+
+                emit(
+                    "GUIDED_WALK_PROGRESS",
+                    "reason="
+                        .. tostring(reason)
+                        .. " distance="
+                        .. string.format(
+                            "%.1f",
+                            distance
+                        )
+                        .. " improved="
+                        .. string.format(
+                            "%.1f",
+                            startDistance
+                                - distance
+                        )
+                        .. " pos="
+                        .. tostring(
+                            root.Position
+                        )
+                )
+            end
+
+            if os.clock()
+                    - lastBestAt
+                    >= (
+                        tonumber(
+                            CFG.GUIDED_WALK_STALL_TIME
+                        )
+                        or 1.6
+                    )
+            then
+                humanoid:
+                    Move(
+                        Vector3.zero,
+                        false
+                    )
+
+                emit(
+                    "GUIDED_WALK_STALL",
+                    "reason="
+                        .. tostring(reason)
+                        .. " start="
+                        .. string.format(
+                            "%.1f",
+                            startDistance
+                        )
+                        .. " best="
+                        .. string.format(
+                            "%.1f",
+                            bestDistance
+                        )
+                        .. " current="
+                        .. string.format(
+                            "%.1f",
+                            distance
+                        )
+                        .. " pos="
+                        .. tostring(
+                            root.Position
+                        )
+                )
+
+                return false,
+                    "GUIDED_WALK_STALLED"
+            end
+        end
+
+        humanoid:
+            Move(
+                Vector3.zero,
+                false
+            )
+
+        local finalDistance =
+            (
+                target.Position
+                - root.Position
+            ).Magnitude
+
+        emit(
+            "GUIDED_WALK_TIMEOUT",
+            "reason="
+                .. tostring(reason)
+                .. " start="
+                .. string.format(
+                    "%.1f",
+                    startDistance
+                )
+                .. " final="
+                .. string.format(
+                    "%.1f",
+                    finalDistance
+                )
+                .. " pos="
+                .. tostring(
+                    root.Position
+                )
+        )
+
+        return false,
+            "GUIDED_WALK_TIMEOUT"
+    end
 
     local function objectPosition(obj)
         if not obj then
