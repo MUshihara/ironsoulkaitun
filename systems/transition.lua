@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - STAGING-AWARE TRANSITION MODULE V60.4
+-- IRON SOUL - STRICT PHYSICAL TRANSITION MODULE V60.5
 --
 -- Factory module used by systems/combat.lua.
 --
@@ -108,22 +108,21 @@ return function(D)
         oldRegion,
         wasRoomCleared
     )
-        local hit =
-            portalTeleportEvidence(
-                beforePos,
-                oldRegion
-            )
-
-        if hit then
-            return hit
-        end
-
-        if wasRoomCleared
-            and not roomClearedVisible()
-        then
-            return "ROOM_CLEARED_GUI_GONE"
-        end
+        -- V60.5:
+        -- Never use Room Cleared GUI disappearance as transition evidence.
+        -- That banner naturally fades and caused false-positive navigation.
+        --
+        -- Only accept server/physical evidence supplied by combat:
+        --   SETTLEMENT
+        --   CHARACTER_CHANGED
+        --   >100-stud movement
+        --   actual RoundWakeTouch region change near the player.
+        return portalTeleportEvidence(
+            beforePos,
+            oldRegion
+        )
     end
+
 
     local function exactPortalMechanism()
         local portalRoot =
@@ -781,6 +780,7 @@ return function(D)
             end
 
             if mech.Prompt
+                and row.Distance <= 90
                 and mech.Prompt.Enabled
                 and type(
                     fireproximityprompt
@@ -851,6 +851,7 @@ return function(D)
                 row.Part
 
             if part
+                and row.Distance <= 110
                 and part:IsA(
                     "BasePart"
                 )
