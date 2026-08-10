@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - TOPOLOGY TELEMETRY MODULE V60.9
+-- IRON SOUL - ADAPTIVE COMBAT TELEMETRY V61.0
 --========================================================--
 
 return function(D)
@@ -15,13 +15,14 @@ return function(D)
     local lastFingerprint = ""
     local lastFull = 0
     local lastStall = 0
+    local lastGlobalCount = 0
     local started = false
 
     local TRACE_FILE =
-        "IronSoul_Telemetry_V60_9.txt"
+        "IronSoul_Telemetry_V61_0.txt"
 
     local STATE_FILE =
-        "IronSoul_LastState_V60_9.txt"
+        "IronSoul_LastState_V61_0.txt"
 
     local function sv(v)
         if v == nil then
@@ -68,7 +69,7 @@ return function(D)
             )
         )
 
-        while #rows > 80 do
+        while #rows > 120 do
             table.remove(
                 rows,
                 1
@@ -396,7 +397,7 @@ return function(D)
         end)
 
         local lines = {
-            "Version=V60.9",
+            "Version=V61.0",
             "Label="
                 .. sv(label),
             "State="
@@ -522,6 +523,65 @@ return function(D)
                     .. sv(
                         teleportData.PlayerCount
                     )
+            )
+        end
+
+        local humanoid =
+            D.getHumanoid
+            and D.getHumanoid()
+
+        local combatProfile =
+            D.getCombatProfile
+            and D.getCombatProfile()
+
+        table.insert(
+            lines,
+            "PlayerHP="
+                .. sv(
+                    humanoid
+                    and humanoid.Health
+                )
+                .. "/"
+                .. sv(
+                    humanoid
+                    and humanoid.MaxHealth
+                )
+        )
+
+        if type(combatProfile)
+            == "table"
+        then
+            table.insert(
+                lines,
+                "CombatProfile="
+                    .. sv(
+                        combatProfile.Mode
+                    )
+                    .. " Height="
+                    .. sv(
+                        combatProfile.Height
+                    )
+                    .. " Offset="
+                    .. sv(
+                        combatProfile.Offset
+                    )
+                    .. " Yaw="
+                    .. sv(
+                        combatProfile.Yaw
+                    )
+                    .. " IncomingHits="
+                    .. sv(
+                        combatProfile.IncomingHits
+                    )
+                    .. " TargetNoDamageAge="
+                    .. sv(
+                        combatProfile.TargetNoDamageAge
+                    )
+            )
+        else
+            table.insert(
+                lines,
+                "CombatProfile=unavailable"
             )
         end
 
@@ -808,6 +868,41 @@ return function(D)
 
                 local nearest =
                     nearestEnemies(1)[1]
+
+                if globalCount > 0
+                    and lastGlobalCount == 0
+                then
+                    append(
+                        "WAVE_SPAWN"
+                            .. " count="
+                            .. sv(
+                                globalCount
+                            )
+                            .. " nearest="
+                            .. sv(
+                                nearest
+                                and nearest.Enemy.Name
+                            )
+                            .. "@"
+                            .. sv(
+                                nearest
+                                and math.floor(
+                                    nearest.Distance
+                                )
+                            )
+                            .. " region="
+                            .. sv(
+                                nearest
+                                and nearest.Region
+                                and D.fullName(
+                                    nearest.Region
+                                )
+                            )
+                    )
+                end
+
+                lastGlobalCount =
+                    globalCount
 
                 local fingerprint =
                     table.concat({
