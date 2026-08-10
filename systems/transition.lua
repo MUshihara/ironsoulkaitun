@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - ADAPTIVE TRANSITION MODULE V60.2
+-- IRON SOUL - LOCAL-ONLY TRANSITION MODULE V60.3
 --
 -- Factory module used by systems/combat.lua.
 --
@@ -197,85 +197,16 @@ return function(D)
     end
 
     function Resolver:TryFastExactPortal()
-        local root =
-            Root()
-
-        if not root then
-            return false
-        end
-
-        local mech =
-            exactPortalMechanism()
-
-        if not mech then
-            return false
-        end
-
-        local beforePos =
-            root.Position
-
-        local oldRegion =
-            CurrentRegion()
-
-        local wasCleared =
-            roomClearedVisible()
-
-        local ok, err =
-            pcall(function()
-                mech.RF:
-                    InvokeServer()
-            end)
-
-        portalLog(
-            "ADAPTIVE_FAST_RF path="
-                .. tostring(
-                    mech.Name
-                )
-                .. " ok="
-                .. tostring(ok)
-                .. " err="
-                .. tostring(err)
-        )
-
-        if not ok then
-            return false
-        end
-
-        local deadline =
-            os.clock()
-            + CFG.ADAPTIVE_FAST_VERIFY
-
-        while os.clock()
-            < deadline
-        do
-            local evidence =
-                transitionEvidence(
-                    beforePos,
-                    oldRegion,
-                    wasCleared
-                )
-
-            if evidence then
-                important(
-                    "Phase | adaptive portal"
-                )
-
-                portalLog(
-                    "ADAPTIVE_FAST_SUCCESS "
-                        .. tostring(
-                            evidence
-                        )
-                )
-
-                return true,
-                    evidence
-            end
-
-            task.wait(0.08)
-        end
-
-        return false
+        -- Disabled in V60.3.
+        --
+        -- V60.1 proved that the RF is real, but also proved that invoking a
+        -- replicated section portal remotely can skip intermediate rooms.
+        -- Exact RoundDoor.Portal progression is now handled only by
+        -- combat.lua's physical near-portal handshake.
+        return false,
+            "DIRECT_ROUND_PORTAL_RF_DISABLED"
     end
+
 
     local function objectPosition(obj)
         if not obj then
@@ -505,12 +436,22 @@ return function(D)
 
             -- Never use generic Workspace.Portal: older validation proved
             -- that it can be a large safety/reset volume.
+            --
+            -- Also do NOT use RoundDoor.Portal here. That portal is handled
+            -- only by combat.lua's physical near-portal handshake so a
+            -- replicated future section portal cannot skip rooms.
             if path == "Workspace.Portal"
                 or string.sub(
                     path,
                     1,
                     #"Workspace.Portal."
                 ) == "Workspace.Portal."
+                or path == "Workspace.RoundDoor.Portal"
+                or string.sub(
+                    path,
+                    1,
+                    #"Workspace.RoundDoor.Portal."
+                ) == "Workspace.RoundDoor.Portal."
             then
                 return
             end
@@ -541,16 +482,6 @@ return function(D)
                 or mech.ServerPortal
             then
                 score += 150
-            end
-
-            if string.find(
-                path,
-                "Workspace.RoundDoor.Portal",
-                1,
-                true
-            )
-            then
-                score += 220
             end
 
             score +=
@@ -692,16 +623,6 @@ return function(D)
                 "NO_ROOT"
         end
 
-        local fastOk,
-            fastResult =
-                self:
-                    TryFastExactPortal()
-
-        if fastOk then
-            return true,
-                fastResult
-        end
-
         local rows =
             candidateRows()
 
@@ -746,6 +667,7 @@ return function(D)
             )
 
             if mech.RF
+                and row.Distance <= 35
                 and (
                     mech.LocalPortal
                     or mech.ServerPortal
