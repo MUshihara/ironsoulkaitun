@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - BAG-AWARE CONTINUOUS LOBBY BRAIN V59.6
+-- IRON SOUL - SMART ORE FORGE + REWARD HARDENING LOBBY V59.7
 --
 -- RUN IN LOBBY.
 --
@@ -545,6 +545,7 @@ local TaskUtil = req("TaskUtil")
 
 local DailyQuestUtil = req("DailyQuestUtil")
 local SevenDailyUtil = req("SevenDailyUtil")
+local DailyLoginUtil = req("DailyLoginUtil")
 local GuidebookUtil = req("GuidebookUtil")
 local UpdateLogUtil = req("UpdateLogUtil")
 local SeasonUtil = req("SeasonUtil")
@@ -892,6 +893,21 @@ local function claimDailyQuest()
         return
     end
 
+    local function claimed(index)
+        local d = pdata()
+
+        local state =
+            d
+            and d.DailyQuest
+            and d.DailyQuest.RewardState
+
+        return state
+            and boolAt(
+                state,
+                index
+            ) == true
+    end
+
     local d = pdata()
     local q =
         d
@@ -906,47 +922,71 @@ local function claimDailyQuest()
     local completed =
         num(q.CompletedNum)
 
-    for i = 1, completed do
+    -- Normal DailyQuest reward milestones are finite. Scan the replicated
+    -- RewardState rather than trusting only one stale snapshot.
+    for i = 1, math.max(5, completed) do
+        local now = pdata()
+
         local state =
-            q.RewardState
+            now
+            and now.DailyQuest
+            and now.DailyQuest.RewardState
             or {}
 
-        if boolAt(
-            state,
-            i
-        ) == false
-        then
-            action(
-                "Claim DailyQuest #"
-                    .. tostring(i)
+        local value =
+            boolAt(
+                state,
+                i
             )
 
-            pcall(function()
-                DailyQuestUtil:
-                    ClickGetReward(
-                        LocalPlayer,
-                        i
-                    )
-            end)
+        if value == false then
+            local success = false
 
-            waitUntil(
-                function()
-                    local now =
-                        pdata()
+            for attempt = 1, 2 do
+                action(
+                    "Claim DailyQuest #"
+                        .. tostring(i)
+                        .. " attempt "
+                        .. tostring(attempt)
+                )
 
-                    return now
-                        and now.DailyQuest
-                        and now.DailyQuest.RewardState
-                        and boolAt(
-                            now.DailyQuest.RewardState,
+                pcall(function()
+                    DailyQuestUtil:
+                        ClickGetReward(
+                            LocalPlayer,
                             i
-                        ) == true
-                end,
-                4
-            )
+                        )
+                end)
+
+                if waitUntil(
+                    function()
+                        return claimed(i)
+                    end,
+                    3.5
+                ) then
+                    success = true
+                    break
+                end
+
+                task.wait(0.20)
+            end
+
+            if not success then
+                -- Exact mapped fallback: nil index asks the system to process
+                -- currently available unclaimed milestones.
+                pcall(function()
+                    DailyQuestUtil:
+                        ClickGetReward(
+                            LocalPlayer
+                        )
+                end)
+
+                task.wait(0.35)
+            end
         end
     end
 end
+
 
 local function claimSeasonPass()
     if not SeasonUtil
@@ -1078,32 +1118,62 @@ local function claimSevenDaily()
             7
         )
 
-    for day = 1, unlock do
+    local function dayClaimed(day)
+        local now = pdata()
+
+        local claimed =
+            now
+            and now.SevenDaily
+            and now.SevenDaily.Claimed
+
+        if type(claimed)
+            ~= "table"
+        then
+            return false
+        end
+
         local key =
             "Day"
             .. tostring(day)
 
-        if seven.Claimed
-            and seven.Claimed[key]
-                == false
-        then
-            action(
-                "Claim SevenDaily "
-                    .. key
-            )
+        return claimed[key] == true
+            or boolAt(
+                claimed,
+                day
+            ) == true
+    end
 
-            pcall(function()
-                SevenDailyUtil:
-                    CanGetDailyReward(
-                        LocalPlayer,
-                        day
-                    )
-            end)
+    for day = 1, unlock do
+        if not dayClaimed(day) then
+            for attempt = 1, 2 do
+                action(
+                    "Claim SevenDaily Day"
+                        .. tostring(day)
+                )
 
-            task.wait(0.2)
+                pcall(function()
+                    SevenDailyUtil:
+                        CanGetDailyReward(
+                            LocalPlayer,
+                            day
+                        )
+                end)
+
+                if waitUntil(
+                    function()
+                        return dayClaimed(day)
+                    end,
+                    3
+                ) then
+                    break
+                end
+
+                task.wait(0.20)
+            end
         end
     end
 end
+
 
 local function claimGuidebook()
     if not GuidebookUtil
@@ -1129,6 +1199,7 @@ local function claimGuidebook()
         "Unlock_Helmet",
         "Unlock_Breastplate",
         "Unlock_Scrolls",
+        "Unlock_Pet",
     }
 
     for _, category
@@ -1180,15 +1251,21 @@ local function claimUpdateLog()
         return
     end
 
-    local ok, can =
-        pcall(function()
-            return UpdateLogUtil:
-                HasCanClaime(
-                    LocalPlayer
-                )
-        end)
+    for _ = 1, 8 do
+        local ok, can =
+            pcall(function()
+                return UpdateLogUtil:
+                    HasCanClaime(
+                        LocalPlayer
+                    )
+            end)
 
-    if ok and can == true then
+        if not ok
+            or can ~= true
+        then
+            break
+        end
+
         action(
             "Claim UpdateLog reward"
         )
@@ -1200,9 +1277,36 @@ local function claimUpdateLog()
                 )
         end)
 
-        task.wait(0.25)
+        task.wait(0.30)
     end
 end
+
+local function inspectDailyLogin()
+    if not DailyLoginUtil
+        or type(
+            DailyLoginUtil.HasUnclaimedReward
+        ) ~= "function"
+    then
+        return
+    end
+
+    local ok, can =
+        pcall(function()
+            return DailyLoginUtil:
+                HasUnclaimedReward(
+                    LocalPlayer
+                )
+        end)
+
+    if ok
+        and can == true
+    then
+        important(
+            "DailyLogin reward waiting | diagnostic needed once"
+        )
+    end
+end
+
 
 local function spendSeasonTickets()
     if not SeasonUtil
@@ -1301,6 +1405,7 @@ claimSeasonPass()
 claimSevenDaily()
 claimGuidebook()
 claimUpdateLog()
+inspectDailyLogin()
 spendSeasonTickets()
 
 --========================================================--
@@ -1755,6 +1860,351 @@ local function forgeSwordPyrite3()
         7
     ) ~= nil
 end
+
+local function oreTotalAndMax()
+    if not ForgeUtil then
+        return 0,
+            nil,
+            {}
+    end
+
+    local ores = {}
+
+    if type(
+        ForgeUtil.GetOres
+    ) == "function"
+    then
+        local ok, value =
+            pcall(function()
+                return ForgeUtil:
+                    GetOres(
+                        LocalPlayer
+                    )
+            end)
+
+        if ok
+            and type(value)
+                == "table"
+        then
+            ores = value
+        end
+    end
+
+    local max = nil
+
+    if type(
+        ForgeUtil.GetMax
+    ) == "function"
+    then
+        local ok, value =
+            pcall(function()
+                return ForgeUtil:
+                    GetMax(
+                        LocalPlayer
+                    )
+            end)
+
+        if ok then
+            max =
+                tonumber(value)
+        end
+    end
+
+    local total = 0
+
+    for _, amount in pairs(ores) do
+        if type(amount)
+            == "number"
+        then
+            total += amount
+        end
+    end
+
+    return total,
+        max,
+        ores
+end
+
+local function oreQuality(id)
+    local rarity = 0
+    local multiplier = 0
+    local hell = 0
+    local price = 0
+
+    if EquipmentUtil
+        and type(
+            EquipmentUtil.GetOreRarity
+        ) == "function"
+    then
+        pcall(function()
+            rarity =
+                num(
+                    EquipmentUtil:
+                        GetOreRarity(id)
+                )
+        end)
+    end
+
+    if ForgeUtil
+        and type(
+            ForgeUtil.GetDef
+        ) == "function"
+    then
+        local ok, def =
+            pcall(function()
+                return ForgeUtil:
+                    GetDef(id)
+            end)
+
+        if ok
+            and type(def)
+                == "table"
+        then
+            rarity =
+                math.max(
+                    rarity,
+                    num(
+                        def.Rarity
+                        or def.Level
+                        or def.Tier
+                    )
+                )
+
+            multiplier =
+                num(
+                    def.ValueMultiplier
+                )
+
+            hell =
+                num(
+                    def.Hellweight
+                )
+
+            price =
+                num(
+                    def.Price
+                )
+        end
+    end
+
+    return rarity * 1000000000
+        + multiplier * 1000000
+        + hell * 1000
+        + price
+end
+
+local function buildBestOreMap(
+    amountNeeded
+)
+    local _, _, ores =
+        oreTotalAndMax()
+
+    local rows = {}
+
+    for id, amount in pairs(ores) do
+        amount =
+            math.floor(
+                num(amount)
+            )
+
+        if amount > 0 then
+            table.insert(
+                rows,
+                {
+                    ID = id,
+                    Amount = amount,
+                    Score =
+                        oreQuality(id),
+                }
+            )
+        end
+    end
+
+    table.sort(
+        rows,
+        function(a,b)
+            if a.Score
+                ~= b.Score
+            then
+                return a.Score
+                    > b.Score
+            end
+
+            return a.Amount
+                > b.Amount
+        end
+    )
+
+    local map = {}
+    local used = 0
+    local highest = nil
+
+    for _, row in ipairs(rows) do
+        if used
+            >= amountNeeded
+        then
+            break
+        end
+
+        local take =
+            math.min(
+                row.Amount,
+                amountNeeded
+                    - used
+            )
+
+        if take > 0 then
+            map[row.ID] = take
+            used += take
+
+            if not highest then
+                highest =
+                    row.ID
+            end
+        end
+    end
+
+    return map,
+        used,
+        highest
+end
+
+local function forgeOreMap(
+    oreMap,
+    forgeType
+)
+    if not recoverForge() then
+        return false
+    end
+
+    local beforeTotal =
+        select(
+            1,
+            oreTotalAndMax()
+        )
+
+    local beforeOwned =
+        inventoryCount()
+
+    local requested = 0
+
+    for _, amount in pairs(
+        oreMap
+    ) do
+        requested +=
+            num(amount)
+    end
+
+    if requested < 3 then
+        return false
+    end
+
+    local ok, accepted =
+        forgeInvoke(
+            "DropOres",
+            oreMap,
+            forgeType,
+            nil
+        )
+
+    if not ok
+        or accepted ~= true
+    then
+        return false
+    end
+
+    if not waitUntil(
+        function()
+            local f =
+                forgeData()
+
+            return f
+                and f.ForgeState
+                    == "QTE"
+        end,
+        5
+    ) then
+        return false
+    end
+
+    if not completeForgeQTE() then
+        return false
+    end
+
+    local finishOk,
+        success =
+            forgeInvoke(
+                "ForgeFinish"
+            )
+
+    if not finishOk
+        or success ~= true
+    then
+        return false
+    end
+
+    waitUntil(
+        function()
+            local f =
+                forgeData()
+
+            return f
+                and (
+                    f.ForgeState
+                        == "Result"
+                    or f.Result
+                        ~= nil
+                )
+        end,
+        5
+    )
+
+    local resultData =
+        forgeData()
+
+    local result =
+        resultData
+        and resultData.Result
+
+    forgeInvoke(
+        "ForgeResult",
+        true
+    )
+
+    local verified =
+        waitUntil(
+            function()
+                local nowTotal =
+                    select(
+                        1,
+                        oreTotalAndMax()
+                    )
+
+                return nowTotal
+                    <= beforeTotal
+                        - requested
+            end,
+            6
+        )
+
+    if verified then
+        action(
+            "Smart forge "
+                .. tostring(forgeType)
+                .. " ores="
+                .. tostring(requested)
+                .. " result="
+                .. tostring(
+                    result
+                    and result.ID
+                    or "?"
+                )
+        )
+    end
+
+    return verified ~= nil
+end
+
 
 local function resolveMain009()
     if taskCompleted(
@@ -2663,12 +3113,192 @@ end
 
 inventoryCleanup()
 
+local function smartForgeFullOreBag()
+    local total,
+        max =
+            oreTotalAndMax()
+
+    if not max
+        or total < max
+    then
+        return true
+    end
+
+    local target =
+        math.max(
+            20,
+            math.floor(
+                max * 0.70
+            )
+        )
+
+    important(
+        "Ore bag "
+            .. tostring(total)
+            .. "/"
+            .. tostring(max)
+            .. " | forging best ores to "
+            .. tostring(target)
+    )
+
+    local forged = 0
+
+    -- If armor slots are missing, make the first craft specifically useful.
+    local d = pdata()
+
+    local slots =
+        d
+        and d.Equipment
+        and d.Equipment.EquipSlots
+        or {}
+
+    local needHelmet =
+        not slots.Helmet
+
+    local needBreastplate =
+        not slots.Breastplate
+
+    while total > target
+        and forged < 10
+    do
+        -- A forge creates one equipment item, so keep that inventory healthy.
+        if inventoryCount() >= 84 then
+            equipmentPass()
+            inventoryCleanup()
+        end
+
+        local freeEquip =
+            100 - inventoryCount()
+
+        if freeEquip <= 0 then
+            important(
+                "Ore forge paused | equipment inventory full"
+            )
+
+            return false
+        end
+
+        local excess =
+            total - target
+
+        local amount
+        local forgeType =
+            "Armor"
+
+        if needHelmet then
+            -- Learned armor distribution: 3 ores -> Helmet.
+            amount = 3
+            needHelmet = false
+
+        elseif needBreastplate then
+            -- 22+ armor ores -> guaranteed Breastplate class.
+            amount =
+                math.min(
+                    22,
+                    excess
+                )
+
+            if amount < 3 then
+                amount = 3
+            end
+
+            needBreastplate = false
+
+        else
+            -- Large armor batches consume ore efficiently and create only a
+            -- handful of equipment pieces instead of dozens of 3-ore swords.
+            amount =
+                math.min(
+                    22,
+                    excess
+                )
+
+            if amount < 3 then
+                amount = 3
+            end
+        end
+
+        amount =
+            math.min(
+                amount,
+                total
+            )
+
+        local oreMap,
+            used,
+            highest =
+                buildBestOreMap(
+                    amount
+                )
+
+        if used < 3 then
+            important(
+                "Ore forge stopped | fewer than 3 usable ores"
+            )
+
+            break
+        end
+
+        important(
+            "Forge | best ore "
+                .. tostring(highest)
+                .. " | "
+                .. tostring(used)
+                .. " ores"
+        )
+
+        if not forgeOreMap(
+            oreMap,
+            forgeType
+        ) then
+            important(
+                "Ore forge failed | stopping safely"
+            )
+
+            return false
+        end
+
+        forged += 1
+
+        equipmentPass()
+
+        total,
+            max =
+                oreTotalAndMax()
+
+        task.wait(0.20)
+    end
+
+    equipmentPass()
+    inventoryCleanup()
+    equipmentPass()
+
+    local finalTotal,
+        finalMax =
+            oreTotalAndMax()
+
+    important(
+        "Ore forge complete | "
+            .. tostring(finalTotal)
+            .. "/"
+            .. tostring(finalMax)
+            .. " | crafts="
+            .. tostring(forged)
+    )
+
+    return finalMax
+        and finalTotal
+            < finalMax
+end
+
+smartForgeFullOreBag()
+
 -- Re-run equipment in case rewards/forge changed best options.
 equipmentPass()
 
 snapshot("AFTER_LOBBY_PASS")
 
--- V59.6 BAG GATE:
+-- V59.7 BAG GATE:
 -- equipment cleanup above gets the first chance to make space.
 -- If the bag is still full, never launch another no-reward dungeon.
 local oreFull,
