@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - GATE-FRONTIER-SAFE TRANSITION MODULE V60.6
+-- IRON SOUL - EMPTY-CORRIDOR-SAFE TRANSITION MODULE V60.7
 --
 -- Factory module used by systems/combat.lua.
 --
