@@ -1,9 +1,14 @@
 --========================================================--
--- IRON SOUL - COMPACT TELEMETRY MODULE V60.8
+-- IRON SOUL - TOPOLOGY TELEMETRY MODULE V60.9
 --========================================================--
 
 return function(D)
     local T = {}
+
+    local TeleportService =
+        game:GetService(
+            "TeleportService"
+        )
 
     local rows = {}
     local lastProgress = os.clock()
@@ -13,10 +18,10 @@ return function(D)
     local started = false
 
     local TRACE_FILE =
-        "IronSoul_Telemetry_V60_8.txt"
+        "IronSoul_Telemetry_V60_9.txt"
 
     local STATE_FILE =
-        "IronSoul_LastState_V60_8.txt"
+        "IronSoul_LastState_V60_9.txt"
 
     local function sv(v)
         if v == nil then
@@ -160,6 +165,22 @@ return function(D)
                         HP =
                             D.enemyHealth(
                                 enemy
+                            ),
+
+                        Region =
+                            select(
+                                1,
+                                D.nearestWakeRegion(
+                                    eroot.Position
+                                )
+                            ),
+
+                        RegionDistance =
+                            select(
+                                2,
+                                D.nearestWakeRegion(
+                                    eroot.Position
+                                )
                             ),
                     }
                 )
@@ -375,7 +396,7 @@ return function(D)
         end)
 
         local lines = {
-            "Version=V60.8",
+            "Version=V60.9",
             "Label="
                 .. sv(label),
             "State="
@@ -464,9 +485,141 @@ return function(D)
                 .. sv(
                     st.Deaths
                 ),
-            "",
-            "NEAREST_ENEMIES:",
         }
+
+        local teleportData = nil
+
+        pcall(function()
+            teleportData =
+                TeleportService:
+                    GetLocalPlayerTeleportData()
+        end)
+
+        if type(teleportData)
+            == "table"
+        then
+            table.insert(
+                lines,
+                "TeleportWorld="
+                    .. sv(
+                        teleportData.WorldId
+                        or teleportData.World
+                    )
+            )
+
+            table.insert(
+                lines,
+                "TeleportDiff="
+                    .. sv(
+                        teleportData.DiffLevel
+                        or teleportData.Diff
+                    )
+            )
+
+            table.insert(
+                lines,
+                "TeleportPlayerCount="
+                    .. sv(
+                        teleportData.PlayerCount
+                    )
+            )
+        end
+
+        table.insert(
+            lines,
+            ""
+        )
+
+        table.insert(
+            lines,
+            "ROUND_WAKE_REGIONS:"
+        )
+
+        local wakeFolder =
+            D.roundWakeFolder
+            and D.roundWakeFolder()
+
+        if wakeFolder then
+            local regionRows = {}
+
+            for _, region in ipairs(
+                wakeFolder:GetChildren()
+            ) do
+                if region:IsA(
+                    "BasePart"
+                ) then
+                    table.insert(
+                        regionRows,
+                        {
+                            Region = region,
+                            Distance =
+                                r
+                                and D.boxDistance(
+                                    region,
+                                    r.Position
+                                )
+                                or math.huge,
+                        }
+                    )
+                end
+            end
+
+            table.sort(
+                regionRows,
+                function(a,b)
+                    return a.Distance
+                        < b.Distance
+                end
+            )
+
+            for i = 1,
+                math.min(
+                    16,
+                    #regionRows
+                )
+            do
+                local row =
+                    regionRows[i]
+
+                table.insert(
+                    lines,
+                    "#"
+                        .. tostring(i)
+                        .. " "
+                        .. D.fullName(
+                            row.Region
+                        )
+                        .. " dist="
+                        .. string.format(
+                            "%.1f",
+                            row.Distance
+                        )
+                        .. " pos="
+                        .. sv(
+                            row.Region.Position
+                        )
+                        .. " size="
+                        .. sv(
+                            row.Region.Size
+                        )
+                )
+            end
+        else
+            table.insert(
+                lines,
+                "none"
+            )
+        end
+
+        table.insert(
+            lines,
+            ""
+        )
+
+        table.insert(
+            lines,
+            "NEAREST_ENEMIES:"
+        )
 
         local enemies =
             nearestEnemies(10)
@@ -498,6 +651,17 @@ return function(D)
                         .. " pos="
                         .. sv(
                             row.Root.Position
+                        )
+                        .. " region="
+                        .. sv(
+                            row.Region
+                            and D.fullName(
+                                row.Region
+                            )
+                        )
+                        .. " regionDist="
+                        .. sv(
+                            row.RegionDistance
                         )
                 )
             end
