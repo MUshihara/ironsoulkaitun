@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - QUIET CONTINUOUS LOBBY BRAIN V59.3
+-- IRON SOUL - BAG-AWARE CONTINUOUS LOBBY BRAIN V59.6
 --
 -- RUN IN LOBBY.
 --
@@ -602,6 +602,119 @@ local function pdata()
             == "table"
         and value
         or nil
+end
+
+local function lobbyOreBagStatus()
+    if not ForgeUtil then
+        return false,
+            nil,
+            nil
+    end
+
+    local ores = nil
+    local max = nil
+    local canAdd = nil
+
+    if type(
+        ForgeUtil.GetOres
+    ) == "function"
+    then
+        local ok, value =
+            pcall(function()
+                return ForgeUtil:
+                    GetOres(
+                        LocalPlayer
+                    )
+            end)
+
+        if ok
+            and type(value)
+                == "table"
+        then
+            ores = value
+        end
+    end
+
+    if type(
+        ForgeUtil.GetMax
+    ) == "function"
+    then
+        local ok, value =
+            pcall(function()
+                return ForgeUtil:
+                    GetMax(
+                        LocalPlayer
+                    )
+            end)
+
+        if ok then
+            max =
+                tonumber(value)
+        end
+    end
+
+    if type(
+        ForgeUtil.CheckCanAdd
+    ) == "function"
+    then
+        local ok, value =
+            pcall(function()
+                return ForgeUtil:
+                    CheckCanAdd(
+                        LocalPlayer
+                    )
+            end)
+
+        if ok then
+            canAdd = value
+        end
+    end
+
+    local used = 0
+
+    if ores then
+        for _, amount in pairs(
+            ores
+        ) do
+            if type(amount)
+                == "number"
+            then
+                used += amount
+            end
+        end
+    end
+
+    local full =
+        canAdd == false
+        or (
+            max
+            and used >= max
+        )
+
+    return full,
+        used,
+        max
+end
+
+local function lobbyEquipmentBagFull()
+    if not EquipmentUtil
+        or type(
+            EquipmentUtil.CheckCanAdd
+        ) ~= "function"
+    then
+        return false
+    end
+
+    local ok, value =
+        pcall(function()
+            return EquipmentUtil:
+                CheckCanAdd(
+                    LocalPlayer
+                )
+        end)
+
+    return ok
+        and value == false
 end
 
 local loaded =
@@ -2554,6 +2667,63 @@ inventoryCleanup()
 equipmentPass()
 
 snapshot("AFTER_LOBBY_PASS")
+
+-- V59.6 BAG GATE:
+-- equipment cleanup above gets the first chance to make space.
+-- If the bag is still full, never launch another no-reward dungeon.
+local oreFull,
+    oreUsed,
+    oreMax =
+        lobbyOreBagStatus()
+
+local equipmentFull =
+    lobbyEquipmentBagFull()
+
+if oreFull
+    or equipmentFull
+then
+    important(
+        oreFull
+        and (
+            "Bag full | Ores "
+            .. tostring(
+                oreUsed
+            )
+            .. "/"
+            .. tostring(
+                oreMax
+            )
+            .. " | dungeon paused"
+        )
+        or (
+            "Bag full | Equipment | dungeon paused"
+        )
+    )
+
+    local old =
+        readJournal()
+
+    writeJournal({
+        State = "BAG_FULL",
+        Decision = "WAIT_FOR_BAG_SPACE",
+        World = old.World or "?",
+        Diff = old.Diff or "?",
+        DirectRepeats = 0,
+        FailureCount = old.FailureCount or 0,
+        FailPower = old.FailPower or 0,
+        Level = level(),
+        Power = power(),
+        BagReason =
+            oreFull
+            and "ORES"
+            or "EQUIPMENT",
+        OreUsed = oreUsed or "?",
+        OreMax = oreMax or "?",
+        UpdatedAt = os.time(),
+    })
+
+    return
+end
 
 --========================================================--
 -- STORY PLANNER
