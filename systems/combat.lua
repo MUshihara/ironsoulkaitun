@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - STRICT EGG + SAME-PLACE REPLAY COMBAT V59.4
+-- IRON SOUL - SOLO NATIVE REPLAY COMBAT V59.5
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -143,7 +143,7 @@ task.wait(2)
 --========================================================--
 
 local ROOT_FOLDER =
-    "IronSoul_StrictEggSamePlaceReplay_V59_4"
+    "IronSoul_SoloNativeReplay_V59_5"
 
 local SESSION =
     os.date("%Y%m%d_%H%M%S")
@@ -393,6 +393,95 @@ local function gameRound()
                     "GameRound"
                 )
         )
+end
+
+--========================================================--
+-- SOLO SESSION GUARD
+--
+-- V59.4's same-PlaceId fallback could join a random public dungeon.
+-- The kaitun is designed around a solo room. If we ever arrive with
+-- more than one participant, do not try to take over that shared run.
+-- Return to Lobby once and let the normal Lobby brain create MaxCount=1.
+--========================================================--
+
+do
+    local playersCount =
+        GameRoundCfg
+        and tonumber(
+            GameRoundCfg:
+                GetAttribute(
+                    "PlayersCount"
+                )
+        )
+        or 0
+
+    if playersCount > 1 then
+        important(
+            "Unexpected multiplayer | rebuilding solo room"
+        )
+
+        local queueBootstrap =
+            getgenv().IronSoulQueueBootstrap
+
+        if type(queueBootstrap)
+            == "function"
+        then
+            queueBootstrap(
+                "unexpected multiplayer -> solo lobby"
+            )
+        end
+
+        local EarlyWorldUtil =
+            req("WorldUtil")
+
+        local sent = false
+
+        if EarlyWorldUtil
+            and EarlyWorldUtil.RemoteEvent
+        then
+            sent =
+                pcall(function()
+                    EarlyWorldUtil.RemoteEvent:
+                        FireServer(
+                            "BackLobby"
+                        )
+                end)
+        end
+
+        if sent then
+            local deadline =
+                os.clock() + 6
+
+            while os.clock()
+                < deadline
+            do
+                local target =
+                    LocalPlayer:
+                        GetAttribute(
+                            "IsTeleporting"
+                        )
+
+                if target ~= nil
+                    and target ~= false
+                then
+                    return
+                end
+
+                task.wait(0.10)
+            end
+        end
+
+        -- Last-resort cleanup for an already contaminated public run.
+        pcall(function()
+            TeleportService:
+                Teleport(
+                    117533937949084,
+                    LocalPlayer
+                )
+        end)
+
+        return
+    end
 end
 
 local function pdata()
@@ -4996,46 +5085,62 @@ local function postRunPlan()
     }
 end
 
+local QueuedForNextTeleport =
+    false
+
 local function queueNext(reason)
+    if QueuedForNextTeleport then
+        return true
+    end
+
+    local ok = false
+
     if type(queueBootstrap)
         == "function"
     then
-        return queueBootstrap(
-            reason
-        )
+        ok =
+            queueBootstrap(
+                reason
+            )
+    else
+        local queue =
+            queue_on_teleport
+            or (
+                syn
+                and syn.queue_on_teleport
+            )
+
+        if type(queue)
+            ~= "function"
+        then
+            return false
+        end
+
+        local payload =
+            "task.wait(1.35);"
+            .. "loadstring(game:HttpGet("
+            .. string.format(
+                "%q",
+                BASE
+                    .. "bootstrap.lua"
+            )
+            .. "))()"
+
+        ok =
+            pcall(
+                queue,
+                payload
+            )
     end
 
-    local queue =
-        queue_on_teleport
-        or (
-            syn
-            and syn.queue_on_teleport
-        )
-
-    if type(queue)
-        ~= "function"
-    then
-        return false
+    if ok then
+        QueuedForNextTeleport =
+            true
     end
-
-    local payload =
-        "task.wait(1.35);"
-        .. "loadstring(game:HttpGet("
-        .. string.format(
-            "%q",
-            BASE
-                .. "bootstrap.lua"
-        )
-        .. "))()"
-
-    local ok =
-        pcall(
-            queue,
-            payload
-        )
 
     return ok
 end
+
 
 local function directLobby(reason)
     important(
@@ -5162,6 +5267,41 @@ local function writeTinyStatus(
             tostring(text)
         )
     end
+end
+
+local function findPlayAgainAloneButton()
+    local pg =
+        LocalPlayer:
+            FindFirstChildOfClass(
+                "PlayerGui"
+            )
+
+    local result =
+        pg
+        and pg:
+            FindFirstChild(
+                "ResultGui"
+            )
+
+    local screen =
+        result
+        and result:
+            FindFirstChild(
+                "ScreenSettlement"
+            )
+
+    local group =
+        screen
+        and screen:
+            FindFirstChild(
+                "BtnGroup"
+            )
+
+    return group
+        and group:
+            FindFirstChild(
+                "PlayAgainAloneBtn"
+            )
 end
 
 local function findNativePlayAgainButton()
@@ -5384,45 +5524,123 @@ local function executeSettlementConnection(
     return false
 end
 
-local function samePlaceReplayFallback(
-    teleportData
+local function replayTransitionEvidence(
+    oldRound,
+    timeout
 )
-    queueNext(
-        "same-place replay fallback"
+    local deadline =
+        os.clock() + timeout
+
+    while os.clock()
+        < deadline
+    do
+        local teleportAttr =
+            LocalPlayer:
+                GetAttribute(
+                    "IsTeleporting"
+                )
+
+        if teleportAttr ~= nil
+            and teleportAttr ~= false
+        then
+            return "TELEPORT",
+                teleportAttr
+        end
+
+        local settled =
+            settlementDetected()
+
+        local nowRound =
+            gameRound()
+
+        if not settled
+            and (
+                nowRound == nil
+                or nowRound <= 1
+                or (
+                    oldRound
+                    and nowRound
+                        < oldRound
+                )
+            )
+        then
+            return "SAME_SERVER_RESET",
+                nowRound
+        end
+
+        task.wait(0.10)
+    end
+
+    return nil
+end
+
+local function runReplayRoute(
+    name,
+    fn,
+    oldRound,
+    waitTime,
+    players
+)
+    settlementLog(
+        "REPLAY_ROUTE "
+            .. tostring(name)
+            .. " PlayersCount="
+            .. tostring(players)
     )
 
-    important(
-        "Replay | same-place fallback"
-    )
+    local ok, err =
+        pcall(fn)
+
+    if not ok then
+        writeTinyStatus(
+            REPLAY_STATUS_FILE,
+            "Route="
+                .. tostring(name)
+                .. "\nResult=CALL_ERROR"
+                .. "\nError="
+                .. tostring(err)
+                .. "\nPlayersCount="
+                .. tostring(players)
+        )
+
+        return false
+    end
+
+    local evidence,
+        detail =
+            replayTransitionEvidence(
+                oldRound,
+                waitTime
+            )
 
     writeTinyStatus(
         REPLAY_STATUS_FILE,
-        "Route=SAME_PLACE_TELEPORT"
+        "Route="
+            .. tostring(name)
+            .. "\nEvidence="
+            .. tostring(evidence)
+            .. "\nDetail="
+            .. tostring(detail)
+            .. "\nPlayersCount="
+            .. tostring(players)
             .. "\nPlaceId="
-            .. tostring(
-                game.PlaceId
-            )
-            .. "\nTeleportData="
-            .. tostring(
-                teleportData
-            )
+            .. tostring(game.PlaceId)
     )
 
-    -- Preserve the exact matchmaking teleport context that brought this
-    -- player into the current dungeon. World is implicit in this PlaceId;
-    -- DiffLevel / owner / player-count context is carried through unchanged.
-    local ok, err =
-        pcall(function()
-            TeleportService:
-                Teleport(
-                    game.PlaceId,
-                    LocalPlayer,
-                    teleportData
-                )
-        end)
+    if evidence
+        == "TELEPORT"
+        or evidence
+            == "SAME_SERVER_RESET"
+    then
+        important(
+            "Replay | solo restart"
+        )
 
-    return ok,
-        err
+        return true,
+            name
+    end
+
+    return false
 end
 
 local function attemptDirectReplay(
@@ -5438,14 +5656,6 @@ local function attemptDirectReplay(
         num(
             journal.FailureCount
         )
-
-    local teleportData = nil
-
-    pcall(function()
-        teleportData =
-            TeleportService:
-                GetLocalPlayerTeleportData()
-    end)
 
     writeJournal({
         State = "REPLAYING",
@@ -5470,29 +5680,27 @@ local function attemptDirectReplay(
             os.time(),
     })
 
+    -- Queue only ONCE in this server. If replay later fails and we must
+    -- return Lobby, directLobby() will reuse this queued bootstrap instead
+    -- of stacking another copy.
     queueNext(
-        "same-stage replay"
+        "solo same-stage replay"
     )
 
     important(
-        "Replay | same stage"
+        "Replay | same stage solo"
     )
 
+    -- Give settlement UI/server state time to fully settle.
     local button =
         waitReplayUIReady(
-            6
+            8
         )
+
+    task.wait(0.65)
 
     local oldRound =
         gameRound()
-
-    local oldVotes =
-        num(
-            GameRoundCfg:
-                GetAttribute(
-                    "VotedAgainCount"
-                )
-        )
 
     local players =
         num(
@@ -5502,211 +5710,161 @@ local function attemptDirectReplay(
                 )
         )
 
-    local gameRoundRE =
+    if players <= 0 then
+        players = 1
+    end
+
+    local remotes =
         ReplicatedStorage:
             FindFirstChild(
                 "Remotes"
             )
 
-    gameRoundRE =
-        gameRoundRE
-        and gameRoundRE:
+    local gameRoundRE =
+        remotes
+        and remotes:
             FindFirstChild(
                 "GameRoundRE"
             )
 
-    local routes = {}
+    -- ========================================================
+    -- ROUTE 1: exact "Play again (alone)" GUI signal.
+    --
+    -- This is deliberately FIRST even when PlayersCount==1.
+    -- It is the game's explicit independent replay path and therefore
+    -- cannot carry a random party forward.
+    -- ========================================================
+    local aloneButton =
+        findPlayAgainAloneButton()
 
-    -- 1) Exact real GUI signal. This runs BOTH normal GUI behavior and
-    -- ScreenSettlement's MouseButton1Down callback, without moving/clicking mouse.
-    if button
+    if aloneButton
         and type(firesignal)
             == "function"
     then
-        table.insert(
-            routes,
-            {
-                Name =
-                    "FIRESIGNAL_MOUSEDOWN",
-                Run =
-                    function()
-                        return pcall(
-                            firesignal,
-                            button.MouseButton1Down
-                        )
-                    end,
-            }
-        )
+        local ok =
+            runReplayRoute(
+                "PLAY_AGAIN_ALONE_SIGNAL",
+                function()
+                    firesignal(
+                        aloneButton.MouseButton1Down
+                    )
+                end,
+                oldRound,
+                12,
+                players
+            )
+
+        if ok then
+            return true,
+                "PLAY_AGAIN_ALONE_SIGNAL"
+        end
     end
 
-    -- 2) Exact ScreenSettlement connection discovered by constants.
-    if button then
-        table.insert(
-            routes,
-            {
-                Name =
-                    "SETTLEMENT_CONNECTION",
-                Run =
-                    function()
-                        return executeSettlementConnection(
-                            button
-                        )
-                    end,
-            }
-        )
-    end
-
-    -- 3) Exact normal replay remote.
+    -- ========================================================
+    -- ROUTE 2: exact server command behind Play again (alone).
+    -- Give the server a full 15 seconds; V59.4 only waited briefly and
+    -- could race into its public same-PlaceId fallback before this
+    -- teleport had time to start.
+    -- ========================================================
     if gameRoundRE
         and gameRoundRE:IsA(
             "RemoteEvent"
         )
     then
-        table.insert(
-            routes,
-            {
-                Name =
-                    "VOTE_PLAY_AGAIN",
-                Run =
-                    function()
-                        return pcall(function()
-                            gameRoundRE:
-                                FireServer(
-                                    "VotePlayAgain"
-                                )
-                        end)
-                    end,
-            }
-        )
-
-        -- 4) Server's explicit independent replay route.
-        table.insert(
-            routes,
-            {
-                Name =
-                    "PLAY_AGAIN_ALONE",
-                Run =
-                    function()
-                        return pcall(function()
-                            gameRoundRE:
-                                FireServer(
-                                    "PlayAgainAlone"
-                                )
-                        end)
-                    end,
-            }
-        )
-    end
-
-    for _, route in ipairs(routes) do
         local ok =
-            route.Run()
-
-        if ok then
-            local evidence,
-                detail =
-                    replayEvidence(
-                        oldRound,
-                        oldVotes,
-                        2.5
-                    )
-
-            writeTinyStatus(
-                REPLAY_STATUS_FILE,
-                "Route="
-                    .. route.Name
-                    .. "\nEvidence="
-                    .. tostring(evidence)
-                    .. "\nDetail="
-                    .. tostring(detail)
-                    .. "\nPlayersCount="
-                    .. tostring(players)
-                    .. "\nVotesBefore="
-                    .. tostring(oldVotes)
-                    .. "\nVotesAfter="
-                    .. tostring(
-                        GameRoundCfg:
-                            GetAttribute(
-                                "VotedAgainCount"
-                            )
-                    )
+            runReplayRoute(
+                "PLAY_AGAIN_ALONE_REMOTE",
+                function()
+                    gameRoundRE:
+                        FireServer(
+                            "PlayAgainAlone"
+                        )
+                end,
+                oldRound,
+                15,
+                players
             )
 
-            if evidence
-                == "TELEPORT"
-                or evidence
-                    == "SAME_SERVER_RESET"
-            then
-                important(
-                    "Replay | restarting"
-                )
-
-                return true,
-                    route.Name
-            end
-
-            if evidence
-                == "VOTE_ACCEPTED"
-            then
-                -- Server accepted the replay vote. Give it longer to perform
-                -- the actual restart before trying another route.
-                local finalEvidence =
-                    replayEvidence(
-                        oldRound,
-                        oldVotes,
-                        10
-                    )
-
-                if finalEvidence
-                    == "TELEPORT"
-                    or finalEvidence
-                        == "SAME_SERVER_RESET"
-                then
-                    important(
-                        "Replay | restarting"
-                    )
-
-                    return true,
-                        route.Name
-                end
-            end
-        end
-    end
-
-    -- 5) User-requested fallback: rejoin the SAME battle PlaceId with the
-    -- exact original matchmaking teleport data instead of bouncing Lobby.
-    if type(teleportData)
-        == "table"
-    then
-        local samePlaceOk,
-            samePlaceErr =
-                samePlaceReplayFallback(
-                    teleportData
-                )
-
-        if samePlaceOk then
+        if ok then
             return true,
-                "SAME_PLACE_TELEPORT"
+                "PLAY_AGAIN_ALONE_REMOTE"
         end
 
-        writeTinyStatus(
-            REPLAY_STATUS_FILE,
-            "Route=SAME_PLACE_TELEPORT"
-                .. "\nResult=FAILED"
-                .. "\nError="
-                .. tostring(
-                    samePlaceErr
-                )
-        )
+        -- Retry the independent route once, after a short server cooldown.
+        task.wait(0.8)
+
+        ok =
+            runReplayRoute(
+                "PLAY_AGAIN_ALONE_REMOTE_RETRY",
+                function()
+                    gameRoundRE:
+                        FireServer(
+                            "PlayAgainAlone"
+                        )
+                end,
+                oldRound,
+                15,
+                players
+            )
+
+        if ok then
+            return true,
+                "PLAY_AGAIN_ALONE_REMOTE_RETRY"
+        end
     end
+
+    -- ========================================================
+    -- ROUTE 3: normal vote is allowed ONLY when this is already solo.
+    -- Never use VotePlayAgain in a multiplayer settlement because it can
+    -- preserve/coordinate the party instead of creating an independent run.
+    -- ========================================================
+    if players <= 1
+        and gameRoundRE
+        and gameRoundRE:IsA(
+            "RemoteEvent"
+        )
+    then
+        local ok =
+            runReplayRoute(
+                "VOTE_PLAY_AGAIN_SOLO",
+                function()
+                    gameRoundRE:
+                        FireServer(
+                            "VotePlayAgain"
+                        )
+                end,
+                oldRound,
+                15,
+                players
+            )
+
+        if ok then
+            return true,
+                "VOTE_PLAY_AGAIN_SOLO"
+        end
+    end
+
+    -- IMPORTANT V59.5:
+    -- DO NOT Teleport(game.PlaceId). That joins an arbitrary public server
+    -- and was proven by V59.4 to produce a 2-player dungeon.
+    writeTinyStatus(
+        REPLAY_STATUS_FILE,
+        "Route=NO_PUBLIC_SAME_PLACE_FALLBACK"
+            .. "\nResult=NATIVE_REPLAY_FAILED"
+            .. "\nPlayersCount="
+            .. tostring(players)
+            .. "\nPlaceId="
+            .. tostring(game.PlaceId)
+    )
 
     important(
-        "Replay | all same-stage routes failed"
+        "Replay | native solo retry failed, rebuilding solo room"
     )
 
     return false,
-        "ALL_REPLAY_ROUTES_FAILED"
+        "NATIVE_SOLO_REPLAY_FAILED"
 end
+
 
 --========================================================--
 -- FINAL CHECKPOINT
