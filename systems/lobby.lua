@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - SMART ORE FORGE + REWARD HARDENING LOBBY V59.7
+-- IRON SOUL - FORGE AUDIT + REWARD FIXES LOBBY V59.8
 --
 -- RUN IN LOBBY.
 --
@@ -548,6 +548,7 @@ local SevenDailyUtil = req("SevenDailyUtil")
 local DailyLoginUtil = req("DailyLoginUtil")
 local GuidebookUtil = req("GuidebookUtil")
 local UpdateLogUtil = req("UpdateLogUtil")
+local ResUpdateLog = req("ResUpdateLog")
 local SeasonUtil = req("SeasonUtil")
 local ResSeasonPass = req("ResSeasonPass")
 
@@ -1242,69 +1243,177 @@ end
 local function claimUpdateLog()
     if not UpdateLogUtil
         or type(
-            UpdateLogUtil.HasCanClaime
-        ) ~= "function"
-        or type(
             UpdateLogUtil.ClaimReward
         ) ~= "function"
+        or type(ResUpdateLog)
+            ~= "table"
     then
         return
     end
 
-    for _ = 1, 8 do
+    local index =
+        ResUpdateLog.__index
+
+    if type(index)
+        ~= "table"
+    then
+        return
+    end
+
+    for _, id in ipairs(index) do
+        local def =
+            ResUpdateLog[id]
+
+        if def then
+            local d =
+                pdata()
+
+            local state =
+                d
+                and d.UpdateLog
+                or {}
+
+            if state[id]
+                ~= true
+            then
+                local success =
+                    false
+
+                for attempt = 1, 2 do
+                    action(
+                        "Claim UpdateLog "
+                            .. tostring(id)
+                    )
+
+                    pcall(function()
+                        UpdateLogUtil:
+                            ClaimReward(
+                                LocalPlayer,
+                                id
+                            )
+                    end)
+
+                    if waitUntil(
+                        function()
+                            local now =
+                                pdata()
+
+                            return now
+                                and now.UpdateLog
+                                and now.UpdateLog[id]
+                                    == true
+                        end,
+                        3.5
+                    ) then
+                        success = true
+                        break
+                    end
+
+                    task.wait(0.20)
+                end
+
+                if not success then
+                    important(
+                        "UpdateLog pending | "
+                            .. tostring(id)
+                    )
+                end
+            end
+        end
+    end
+end
+
+
+local function inspectDailyLogin()
+    if not DailyLoginUtil then
+        return 0,
+            {}
+    end
+
+    local pending = {}
+
+    if type(
+        DailyLoginUtil.GetClientState
+    ) == "function"
+    then
+        local ok, state =
+            pcall(function()
+                -- nil third arg intentionally prevents us from treating
+                -- MakeUp as a normal claimable reward.
+                return DailyLoginUtil:
+                    GetClientState(
+                        LocalPlayer,
+                        nil
+                    )
+            end)
+
+        if ok
+            and type(state)
+                == "table"
+            and type(state.Rewards)
+                == "table"
+        then
+            for _, reward in ipairs(
+                state.Rewards
+            ) do
+                if type(reward)
+                    == "table"
+                    and tostring(
+                        reward.State
+                    ) == "Claimable"
+                then
+                    table.insert(
+                        pending,
+                        {
+                            Id =
+                                reward.Id,
+                            Day =
+                                reward.Day,
+                        }
+                    )
+                end
+            end
+        end
+    end
+
+    -- Fallback signal if state layout ever changes.
+    if #pending == 0
+        and type(
+            DailyLoginUtil.HasUnclaimedReward
+        ) == "function"
+    then
         local ok, can =
             pcall(function()
-                return UpdateLogUtil:
-                    HasCanClaime(
+                return DailyLoginUtil:
+                    HasUnclaimedReward(
                         LocalPlayer
                     )
             end)
 
-        if not ok
-            or can ~= true
+        if ok
+            and can == true
         then
-            break
+            table.insert(
+                pending,
+                {
+                    Id = "?",
+                    Day = "?",
+                }
+            )
         end
-
-        action(
-            "Claim UpdateLog reward"
-        )
-
-        pcall(function()
-            UpdateLogUtil:
-                ClaimReward(
-                    LocalPlayer
-                )
-        end)
-
-        task.wait(0.30)
-    end
-end
-
-local function inspectDailyLogin()
-    if not DailyLoginUtil
-        or type(
-            DailyLoginUtil.HasUnclaimedReward
-        ) ~= "function"
-    then
-        return
     end
 
-    local ok, can =
-        pcall(function()
-            return DailyLoginUtil:
-                HasUnclaimedReward(
-                    LocalPlayer
-                )
-        end)
-
-    if ok
-        and can == true
-    then
+    if #pending > 0 then
         important(
-            "DailyLogin reward waiting | diagnostic needed once"
+            "DailyLogin free reward pending | "
+                .. tostring(
+                    #pending
+                )
         )
     end
+
+    return #pending,
+        pending
 end
 
 
@@ -1405,8 +1514,180 @@ claimSeasonPass()
 claimSevenDaily()
 claimGuidebook()
 claimUpdateLog()
-inspectDailyLogin()
+
+local dailyLoginPending,
+    dailyLoginRows =
+        inspectDailyLogin()
+
 spendSeasonTickets()
+
+local function writeRewardAudit()
+    if type(writefile)
+        ~= "function"
+    then
+        return
+    end
+
+    local d =
+        pdata()
+        or {}
+
+    local lines = {
+        "Version=V59.8",
+    }
+
+    -- DailyQuest pending milestones.
+    local dqPending = {}
+
+    local dq =
+        d.DailyQuest
+
+    if type(dq)
+        == "table"
+        and type(
+            dq.RewardState
+        ) == "table"
+    then
+        for k, v in pairs(
+            dq.RewardState
+        ) do
+            if v == false then
+                table.insert(
+                    dqPending,
+                    tostring(k)
+                )
+            end
+        end
+    end
+
+    table.sort(dqPending)
+
+    table.insert(
+        lines,
+        "DailyQuestPending="
+            .. table.concat(
+                dqPending,
+                ","
+            )
+    )
+
+    -- SevenDaily pending unlocked days.
+    local sevenPending = {}
+
+    local seven =
+        d.SevenDaily
+
+    if type(seven)
+        == "table"
+    then
+        local unlock =
+            math.clamp(
+                num(
+                    seven.UnlockDay
+                ),
+                0,
+                7
+            )
+
+        local claimed =
+            seven.Claimed
+            or {}
+
+        for day = 1, unlock do
+            if claimed[
+                "Day"
+                .. tostring(day)
+            ] == false
+            then
+                table.insert(
+                    sevenPending,
+                    tostring(day)
+                )
+            end
+        end
+    end
+
+    table.insert(
+        lines,
+        "SevenDailyPending="
+            .. table.concat(
+                sevenPending,
+                ","
+            )
+    )
+
+    -- Update logs still unclaimed after fixed claimant.
+    local updatePending = {}
+
+    if type(ResUpdateLog)
+            == "table"
+        and type(
+            ResUpdateLog.__index
+        ) == "table"
+    then
+        local state =
+            d.UpdateLog
+            or {}
+
+        for _, id in ipairs(
+            ResUpdateLog.__index
+        ) do
+            if ResUpdateLog[id]
+                and state[id]
+                    ~= true
+            then
+                table.insert(
+                    updatePending,
+                    tostring(id)
+                )
+            end
+        end
+    end
+
+    table.insert(
+        lines,
+        "UpdateLogPending="
+            .. table.concat(
+                updatePending,
+                ","
+            )
+    )
+
+    table.insert(
+        lines,
+        "DailyLoginFreePending="
+            .. tostring(
+                dailyLoginPending
+            )
+    )
+
+    for _, row in ipairs(
+        dailyLoginRows
+    ) do
+        table.insert(
+            lines,
+            "DailyLogin="
+                .. tostring(
+                    row.Day
+                )
+                .. "|"
+                .. tostring(
+                    row.Id
+                )
+        )
+    end
+
+    pcall(
+        writefile,
+        "IronSoul_LastRewardAudit_V59_8.txt",
+        table.concat(
+            lines,
+            "\n"
+        )
+    )
+end
+
+writeRewardAudit()
 
 --========================================================--
 -- SWORD SKILL TREE
@@ -2202,7 +2483,8 @@ local function forgeOreMap(
         )
     end
 
-    return verified ~= nil
+    return verified ~= nil,
+        result
 end
 
 
@@ -3113,13 +3395,32 @@ end
 
 inventoryCleanup()
 
+local SMART_FORGE_STATUS_FILE =
+    "IronSoul_LastSmartForge_V59_8.txt"
+
+local function writeSmartForgeStatus(lines)
+    if type(writefile)
+        == "function"
+    then
+        pcall(
+            writefile,
+            SMART_FORGE_STATUS_FILE,
+            table.concat(
+                lines,
+                "\n"
+            )
+        )
+    end
+end
+
 local function smartForgeFullOreBag()
-    local total,
-        max =
+    local initialTotal,
+        initialMax =
             oreTotalAndMax()
 
-    if not max
-        or total < max
+    if not initialMax
+        or initialTotal
+            < initialMax
     then
         return true
     end
@@ -3128,20 +3429,26 @@ local function smartForgeFullOreBag()
         math.max(
             20,
             math.floor(
-                max * 0.70
+                initialMax * 0.70
             )
         )
 
+    local initialPower =
+        power()
+
+    local initialInventory =
+        inventoryCount()
+
     important(
         "Ore bag "
-            .. tostring(total)
+            .. tostring(initialTotal)
             .. "/"
-            .. tostring(max)
-            .. " | forging best ores to "
-            .. tostring(target)
+            .. tostring(initialMax)
+            .. " | smart forge"
     )
 
     local forged = 0
+    local results = {}
 
     -- If armor slots are missing, make the first craft specifically useful.
     local d = pdata()
@@ -3158,24 +3465,26 @@ local function smartForgeFullOreBag()
     local needBreastplate =
         not slots.Breastplate
 
+    local total =
+        initialTotal
+
+    local max =
+        initialMax
+
     while total > target
         and forged < 10
     do
-        -- A forge creates one equipment item, so keep that inventory healthy.
         if inventoryCount() >= 84 then
             equipmentPass()
             inventoryCleanup()
         end
 
-        local freeEquip =
-            100 - inventoryCount()
-
-        if freeEquip <= 0 then
+        if inventoryCount() >= 100 then
             important(
                 "Ore forge paused | equipment inventory full"
             )
 
-            return false
+            break
         end
 
         local excess =
@@ -3186,12 +3495,10 @@ local function smartForgeFullOreBag()
             "Armor"
 
         if needHelmet then
-            -- Learned armor distribution: 3 ores -> Helmet.
             amount = 3
             needHelmet = false
 
         elseif needBreastplate then
-            -- 22+ armor ores -> guaranteed Breastplate class.
             amount =
                 math.min(
                     22,
@@ -3205,8 +3512,6 @@ local function smartForgeFullOreBag()
             needBreastplate = false
 
         else
-            -- Large armor batches consume ore efficiently and create only a
-            -- handful of equipment pieces instead of dozens of 3-ore swords.
             amount =
                 math.min(
                     22,
@@ -3232,33 +3537,55 @@ local function smartForgeFullOreBag()
                 )
 
         if used < 3 then
+            break
+        end
+
+        local ok,
+            result =
+                forgeOreMap(
+                    oreMap,
+                    forgeType
+                )
+
+        if not ok then
             important(
-                "Ore forge stopped | fewer than 3 usable ores"
+                "Ore forge failed | stopping safely"
             )
 
             break
         end
 
-        important(
-            "Forge | best ore "
-                .. tostring(highest)
-                .. " | "
-                .. tostring(used)
-                .. " ores"
-        )
-
-        if not forgeOreMap(
-            oreMap,
-            forgeType
-        ) then
-            important(
-                "Ore forge failed | stopping safely"
-            )
-
-            return false
-        end
-
         forged += 1
+
+        table.insert(
+            results,
+            {
+                Craft = forged,
+                Ores = used,
+                HighestOre =
+                    highest,
+                ID =
+                    result
+                    and result.ID
+                    or "?",
+                Class =
+                    result
+                    and result.Class
+                    or "?",
+                MaxOre =
+                    result
+                    and result.MaxOre
+                    or "?",
+                Rating =
+                    result
+                    and result.Rating
+                    or "?",
+                Factor =
+                    result
+                    and result.Factor
+                    or "?",
+            }
+        )
 
         equipmentPass()
 
@@ -3266,7 +3593,7 @@ local function smartForgeFullOreBag()
             max =
                 oreTotalAndMax()
 
-        task.wait(0.20)
+        task.wait(0.18)
     end
 
     equipmentPass()
@@ -3277,13 +3604,113 @@ local function smartForgeFullOreBag()
         finalMax =
             oreTotalAndMax()
 
-    important(
-        "Ore forge complete | "
-            .. tostring(finalTotal)
+    local finalPower =
+        power()
+
+    local finalInventory =
+        inventoryCount()
+
+    local lines = {
+        "Version=V59.8",
+        "OreBefore="
+            .. tostring(
+                initialTotal
+            )
             .. "/"
-            .. tostring(finalMax)
-            .. " | crafts="
+            .. tostring(
+                initialMax
+            ),
+        "OreTarget="
+            .. tostring(target),
+        "OreAfter="
+            .. tostring(
+                finalTotal
+            )
+            .. "/"
+            .. tostring(
+                finalMax
+            ),
+        "Crafts="
+            .. tostring(forged),
+        "PowerBefore="
+            .. tostring(
+                initialPower
+            ),
+        "PowerAfter="
+            .. tostring(
+                finalPower
+            ),
+        "EquipmentInventoryBefore="
+            .. tostring(
+                initialInventory
+            ),
+        "EquipmentInventoryAfter="
+            .. tostring(
+                finalInventory
+            ),
+    }
+
+    for _, row in ipairs(results) do
+        table.insert(
+            lines,
+            "Craft"
+                .. tostring(
+                    row.Craft
+                )
+                .. "="
+                .. tostring(
+                    row.Class
+                )
+                .. "|"
+                .. tostring(
+                    row.ID
+                )
+                .. "|ores="
+                .. tostring(
+                    row.Ores
+                )
+                .. "|highest="
+                .. tostring(
+                    row.HighestOre
+                )
+                .. "|MaxOre="
+                .. tostring(
+                    row.MaxOre
+                )
+                .. "|Rating="
+                .. tostring(
+                    row.Rating
+                )
+                .. "|Factor="
+                .. tostring(
+                    row.Factor
+                )
+        )
+    end
+
+    writeSmartForgeStatus(
+        lines
+    )
+
+    important(
+        "Ore forge | "
+            .. tostring(
+                initialTotal
+            )
+            .. "→"
+            .. tostring(
+                finalTotal
+            )
+            .. " | "
             .. tostring(forged)
+            .. " crafts | Power "
+            .. tostring(
+                initialPower
+            )
+            .. "→"
+            .. tostring(
+                finalPower
+            )
     )
 
     return finalMax
