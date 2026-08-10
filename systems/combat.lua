@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - ROUTE-GUIDED TRANSITION COMBAT V61.2
+-- IRON SOUL - OPEN-GATE CROSSING COMBAT V61.3
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -159,6 +159,12 @@ local CFG = {
     GATE_OPEN_NEAR_DISTANCE = 45,
     GATE_ENEMY_RECOVERY_RADIUS = 190,
     GATE_NO_EXPECTED_ENEMY_RADIUS = 120,
+
+    -- Already-open expected gate recovery.
+    OPEN_GATE_CROSS_DISTANCE = 14,
+    OPEN_GATE_CROSS_SUCCESS = 6,
+    OPEN_GATE_CROSS_TIMEOUT = 2.2,
+    OPEN_GATE_REISSUE = 0.16,
 
     -- Evidence-driven gate timing. Old builds could spend ~30 sec at an
     -- ordinary gate waiting for a section portal that did not exist.
@@ -1461,6 +1467,304 @@ getgenv().IronSoulExpectedGateStatus =
             nearestClosed
     end
 
+
+getgenv().IronSoulCrossAlreadyOpenGate =
+    function(row, reason)
+        if not row
+            or not Root
+            or not Root.Parent
+            or not row.Root
+            or not row.Root.Parent
+        then
+            return false,
+                "INVALID_OPEN_GATE"
+        end
+
+        local region =
+            CurrentCombatRegion
+
+        if not region then
+            return false,
+                "NO_REGION"
+        end
+
+        local humanoid =
+            Humanoid
+
+        if not humanoid
+            or humanoid.Health <= 0
+        then
+            return false,
+                "NO_HUMANOID"
+        end
+
+        local doorRoot =
+            row.Root
+
+        local doorPos =
+            row.PromptPos
+            or doorRoot.Position
+
+        local outward =
+            doorRoot.CFrame.LookVector
+
+        outward =
+            Vector3.new(
+                outward.X,
+                0,
+                outward.Z
+            )
+
+        if outward.Magnitude <= 0.1 then
+            outward =
+                Vector3.new(
+                    doorPos.X
+                        - region.Position.X,
+                    0,
+                    doorPos.Z
+                        - region.Position.Z
+                )
+        end
+
+        if outward.Magnitude <= 0.1 then
+            outward =
+                Root.CFrame.LookVector
+        else
+            outward =
+                outward.Unit
+        end
+
+        -- Orient away from the room just completed.
+        local fromRegion =
+            Vector3.new(
+                doorPos.X
+                    - region.Position.X,
+                0,
+                doorPos.Z
+                    - region.Position.Z
+            )
+
+        if fromRegion.Magnitude > 0.1
+            and outward:
+                Dot(
+                    fromRegion.Unit
+                ) < 0
+        then
+            outward =
+                -outward
+        end
+
+        local beforePos =
+            Root.Position
+
+        local beforeRound =
+            gameRound()
+
+        local oldRegion =
+            region
+
+        local destination =
+            doorPos
+            + outward
+                * CFG.OPEN_GATE_CROSS_DISTANCE
+
+        if getgenv().IronSoulTelemetry then
+            getgenv().IronSoulTelemetry:
+                Event(
+                    "OPEN_GATE_CROSS_START",
+                    "reason="
+                        .. tostring(reason)
+                        .. " round="
+                        .. tostring(
+                            row.RoundNum
+                        )
+                        .. " player="
+                        .. tostring(
+                            beforePos
+                        )
+                        .. " door="
+                        .. tostring(
+                            doorPos
+                        )
+                        .. " destination="
+                        .. tostring(
+                            destination
+                        )
+                )
+        end
+
+        getgenv().IronSoulNavTrace(
+            "OPEN_GATE_CROSS_START round="
+                .. tostring(
+                    row.RoundNum
+                )
+                .. " playerDist="
+                .. tostring(
+                    row.PlayerDistance
+                )
+                .. " door="
+                .. tostring(
+                    doorPos
+                )
+        )
+
+        local started =
+            os.clock()
+
+        while os.clock()
+            - started
+            < CFG.OPEN_GATE_CROSS_TIMEOUT
+        do
+            if not Root
+                or not Root.Parent
+                or humanoid.Health <= 0
+            then
+                return true,
+                    "CHARACTER_CHANGED"
+            end
+
+            -- Real movement; no CFrame teleport for this recovery.
+            pcall(
+                humanoid.MoveTo,
+                humanoid,
+                destination
+            )
+
+            task.wait(
+                CFG.OPEN_GATE_REISSUE
+            )
+
+            if settlementDetected() then
+                return true,
+                    "SETTLEMENT"
+            end
+
+            local nowRound =
+                gameRound()
+
+            if beforeRound
+                and nowRound
+                and nowRound
+                    ~= beforeRound
+            then
+                if getgenv().IronSoulTelemetry then
+                    getgenv().IronSoulTelemetry:
+                        Event(
+                            "OPEN_GATE_CROSS_SUCCESS",
+                            "GAME_ROUND "
+                                .. tostring(
+                                    beforeRound
+                                )
+                                .. "->"
+                                .. tostring(
+                                    nowRound
+                                )
+                        )
+                end
+
+                return true,
+                    "GAME_ROUND_CHANGED"
+            end
+
+            local newRegion,
+                newRegionDist =
+                    nearestWakeRegion(
+                        Root.Position
+                    )
+
+            if newRegion
+                and newRegion
+                    ~= oldRegion
+                and newRegionDist <= 30
+            then
+                CurrentCombatRegion =
+                    newRegion
+
+                CurrentCombatRound =
+                    gameRound()
+
+                if getgenv().IronSoulTelemetry then
+                    getgenv().IronSoulTelemetry:
+                        Event(
+                            "OPEN_GATE_CROSS_SUCCESS",
+                            "NEW_REGION "
+                                .. fullName(
+                                    newRegion
+                                )
+                        )
+                end
+
+                return true,
+                    "NEW_REGION"
+            end
+
+            -- Crossing the doorway plane is enough to leave GATE and
+            -- re-evaluate from the far side.
+            local beyond =
+                Vector3.new(
+                    Root.Position.X
+                        - doorPos.X,
+                    0,
+                    Root.Position.Z
+                        - doorPos.Z
+                ):
+                    Dot(outward)
+
+            if beyond
+                >= CFG.OPEN_GATE_CROSS_SUCCESS
+            then
+                if getgenv().IronSoulTelemetry then
+                    getgenv().IronSoulTelemetry:
+                        Event(
+                            "OPEN_GATE_CROSS_SUCCESS",
+                            "CROSSED_PLANE beyond="
+                                .. string.format(
+                                    "%.1f",
+                                    beyond
+                                )
+                                .. " pos="
+                                .. tostring(
+                                    Root.Position
+                                )
+                        )
+                end
+
+                return true,
+                    "OPEN_GATE_CROSSED"
+            end
+        end
+
+        humanoid:
+            Move(
+                Vector3.zero,
+                false
+            )
+
+        local moved =
+            (
+                Root.Position
+                - beforePos
+            ).Magnitude
+
+        if getgenv().IronSoulTelemetry then
+            getgenv().IronSoulTelemetry:
+                Event(
+                    "OPEN_GATE_CROSS_STALL",
+                    "moved="
+                        .. string.format(
+                            "%.1f",
+                            moved
+                        )
+                        .. " final="
+                        .. tostring(
+                            Root.Position
+                        )
+                )
+        end
+
+        return false,
+            "OPEN_GATE_CROSS_STALLED"
+    end
 
 local function spatialLiveEnemyCount(
     radius
@@ -6422,6 +6726,81 @@ while not stopReason do
                     task.wait(0.08)
 
                     continue
+                end
+            end
+
+            -- V61.3: the expected gate can already be open.
+            -- If so, physically cross it instead of waiting forever or
+            -- considering a far duplicate branch.
+            if not gateEnemy then
+                local openExpected,
+                    closedExpected =
+                        getgenv().IronSoulExpectedGateStatus(
+                            completedRound
+                        )
+
+                if openExpected
+                    and openExpected.PlayerDistance
+                        <= CFG.GATE_OPEN_NEAR_DISTANCE
+                then
+                    local crossed,
+                        crossResult =
+                            getgenv().IronSoulCrossAlreadyOpenGate(
+                                openExpected,
+                                "GATE_EXPECTED_ALREADY_OPEN"
+                            )
+
+                    if crossed then
+                        portalsInvoked += 1
+
+                        writePhaseAudit(
+                            "OPEN_EXPECTED_GATE",
+                            completedRound,
+                            crossResult
+                        )
+
+                        state =
+                            "COMBAT"
+
+                        CurrentState =
+                            state
+
+                        completedRound =
+                            nil
+
+                        pendingGateRound =
+                            nil
+
+                        noLocalEnemySince =
+                            nil
+
+                        getgenv().IronSoulAdaptiveGateState.EnteredAt =
+                            nil
+
+                        lockRegion(
+                            "AFTER_OPEN_GATE_CROSS"
+                        )
+
+                        CurrentCombatRound =
+                            gameRound()
+
+                        lastRound =
+                            gameRound()
+                            or lastRound
+
+                        task.wait(0.18)
+
+                        continue
+                    else
+                        -- Retry the same nearby correct gate. Do not fall
+                        -- through to a far duplicate on this iteration.
+                        gateRetryAt =
+                            os.clock() + 0.45
+
+                        task.wait(0.08)
+
+                        continue
+                    end
                 end
             end
 
