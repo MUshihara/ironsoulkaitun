@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - DOOR-FIRST ADAPTIVE COMBAT V60.3
+-- IRON SOUL - STAGING-AWARE ADAPTIVE COMBAT V60.4
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -126,6 +126,12 @@ local CFG = {
     ADAPTIVE_STUCK_TIME = 2.25,
     ADAPTIVE_RETRY_COOLDOWN = 2.0,
     ADAPTIVE_MAX_DISTANCE = 450,
+
+    -- Some section portals land in a transition-only staging area rather
+    -- than directly inside a RoundWakeTouch combat room.
+    STAGING_REGION_DISTANCE = 32,
+    STAGING_IDLE_TIME = 2.8,
+    STAGING_RETRY_COOLDOWN = 2.5,
 
     -- Only the exact RoundDoor.Portal can be used, never Workspace.Portal.
     SECTION_PORTAL_NEAR_DISTANCE = 85,
@@ -4101,6 +4107,12 @@ getgenv().IronSoulAdaptiveGateState = {
     LastAttemptAt = 0,
 }
 
+getgenv().IronSoulStagingState = {
+    NoEnemySince = nil,
+    LastAttemptAt = 0,
+    LastStatusAt = 0,
+}
+
 lockRegion(
     "START"
 )
@@ -4280,6 +4292,9 @@ while not stopReason do
                 noLocalEnemySince =
                     nil
 
+                getgenv().IronSoulStagingState.NoEnemySince =
+                    nil
+
                 local result =
                     fightEnemy(enemy)
 
@@ -4316,6 +4331,156 @@ while not stopReason do
 
                 local localCount =
                     #localLiveEnemies()
+
+                -- V60.4 TRANSITION-STAGING WATCHDOG
+                --
+                -- A section portal can move the player into an intermediate
+                -- teleport/staging area that has:
+                --   * no local enemies
+                --   * no DragonEgg
+                --   * no nearby RoundWakeTouch combat region
+                --   * no GameRound advance yet
+                --
+                -- V60.3 treated that as ordinary COMBAT and waited forever.
+                -- Here we allow the separate transition module to search for
+                -- the NEXT local gate/portal without changing completedRound.
+                if localCount == 0
+                    and not currentDragonEgg()
+                then
+                    local stagingRegion,
+                        stagingDist =
+                            nearestWakeRegion(
+                                Root.Position
+                            )
+
+                    local outsideCombatRoom =
+                        not stagingRegion
+                        or stagingDist
+                            > CFG.STAGING_REGION_DISTANCE
+
+                    if outsideCombatRoom then
+                        if not getgenv().IronSoulStagingState.NoEnemySince then
+                            getgenv().IronSoulStagingState.NoEnemySince =
+                                os.clock()
+                        end
+
+                        local stagingAge =
+                            os.clock()
+                            - getgenv().IronSoulStagingState.NoEnemySince
+
+                        if stagingAge
+                                >= CFG.STAGING_IDLE_TIME
+                            and os.clock()
+                                - getgenv().IronSoulStagingState.LastAttemptAt
+                                >= CFG.STAGING_RETRY_COOLDOWN
+                        then
+                            getgenv().IronSoulStagingState.LastAttemptAt =
+                                os.clock()
+
+                            important(
+                                "Staging | searching next phase"
+                            )
+
+                            local resolver =
+                                getgenv().IronSoulTransitionResolver
+
+                            local moved,
+                                moveResult =
+                                    resolver
+                                    and resolver:
+                                        TryAdaptive()
+
+                            if moved then
+                                portalsInvoked += 1
+
+                                writePhaseAudit(
+                                    "COMBAT_STAGING_FALLBACK",
+                                    completedRound,
+                                    moveResult
+                                )
+
+                                important(
+                                    "Phase | staging transition"
+                                )
+
+                                lockRegion(
+                                    "AFTER_STAGING_TRANSITION"
+                                )
+
+                                CurrentCombatRound =
+                                    gameRound()
+
+                                lastRound =
+                                    gameRound()
+                                    or lastRound
+
+                                noLocalEnemySince =
+                                    nil
+
+                                getgenv().IronSoulStagingState.NoEnemySince =
+                                    nil
+
+                                task.wait(0.45)
+
+                                continue
+                            end
+
+                            -- One tiny overwritten status file only.
+                            if type(writefile)
+                                == "function"
+                            then
+                                local snapshot =
+                                    resolver
+                                    and resolver:
+                                        Snapshot(8)
+                                    or "TransitionResolver=nil"
+
+                                pcall(
+                                    writefile,
+                                    "IronSoul_LastNavigation_V60_4.txt",
+                                    "State=COMBAT_STAGING"
+                                        .. "\nGameRound="
+                                        .. tostring(
+                                            gameRound()
+                                        )
+                                        .. "\nPlayerPos="
+                                        .. tostring(
+                                            Root.Position
+                                        )
+                                        .. "\nNearestRegion="
+                                        .. tostring(
+                                            stagingRegion
+                                            and fullName(
+                                                stagingRegion
+                                            )
+                                        )
+                                        .. "\nRegionDistance="
+                                        .. tostring(
+                                            stagingDist
+                                        )
+                                        .. "\nLocalEnemies="
+                                        .. tostring(
+                                            localCount
+                                        )
+                                        .. "\nGlobalEnemies="
+                                        .. tostring(
+                                            #liveEnemies()
+                                        )
+                                        .. "\nCandidates:\n"
+                                        .. tostring(
+                                            snapshot
+                                        )
+                                )
+                            end
+                        end
+                    else
+                        getgenv().IronSoulStagingState.NoEnemySince =
+                            nil
+                    end
+                else
+                    getgenv().IronSoulStagingState.NoEnemySince =
+                        nil
+                end
 
                 if localCount == 0
                     and os.clock()
