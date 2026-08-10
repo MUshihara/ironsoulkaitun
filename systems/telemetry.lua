@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - ADAPTIVE COMBAT TELEMETRY V61.0
+-- IRON SOUL - NATIVE-MOTION TELEMETRY V61.1
 --========================================================--
 
 return function(D)
@@ -19,10 +19,10 @@ return function(D)
     local started = false
 
     local TRACE_FILE =
-        "IronSoul_Telemetry_V61_0.txt"
+        "IronSoul_Telemetry_V61_1.txt"
 
     local STATE_FILE =
-        "IronSoul_LastState_V61_0.txt"
+        "IronSoul_LastState_V61_1.txt"
 
     local function sv(v)
         if v == nil then
@@ -397,7 +397,7 @@ return function(D)
         end)
 
         local lines = {
-            "Version=V61.0",
+            "Version=V61.1",
             "Label="
                 .. sv(label),
             "State="
@@ -533,6 +533,28 @@ return function(D)
         local combatProfile =
             D.getCombatProfile
             and D.getCombatProfile()
+
+        table.insert(
+            lines,
+            "PlayerVelocity="
+                .. sv(
+                    r
+                    and r.AssemblyLinearVelocity
+                )
+        )
+
+        local movementHumanoid =
+            D.getHumanoid
+            and D.getHumanoid()
+
+        table.insert(
+            lines,
+            "MoveDirection="
+                .. sv(
+                    movementHumanoid
+                    and movementHumanoid.MoveDirection
+                )
+        )
 
         table.insert(
             lines,
