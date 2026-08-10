@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - FORGE AUDIT + REWARD FIXES LOBBY V59.8
+-- IRON SOUL - AUTO CODES + PROGRESSION LOBBY V60.1
 --
 -- RUN IN LOBBY.
 --
@@ -549,6 +549,10 @@ local DailyLoginUtil = req("DailyLoginUtil")
 local GuidebookUtil = req("GuidebookUtil")
 local UpdateLogUtil = req("UpdateLogUtil")
 local ResUpdateLog = req("ResUpdateLog")
+
+local CodesUtil = req("CodesUtil")
+local CodesController = req("CodesController")
+
 local SeasonUtil = req("SeasonUtil")
 local ResSeasonPass = req("ResSeasonPass")
 
@@ -860,7 +864,321 @@ local function snapshot(label)
     )
 end
 
+--========================================================--
+-- PROMO CODES V60.1
+--
+-- Exact GUI path recovered from V60 diagnostic:
+--
+--   CodesController:RedeemCode(code)
+--     -> CodesRF:InvokeServer("RedeemCode", code)
+--
+-- Codes are attempted once intelligently. Permanent terminal responses are
+-- remembered. Temporary responses are retried on a later day, not every
+-- Lobby visit.
+--========================================================--
+
+local CODE_STATUS_FILE =
+    "IronSoul_CodeStatus_V60_1.txt"
+
+local KNOWN_CODES = {
+    "SEASON3LIMITED",
+    "IRONSOULWEEKEND19",
+    "SEASON3EXPAND",
+    "SEASON2ENDING",
+    "IRONSOULWEEKEND18",
+    "SCYTHEWEAPON",
+    "NEWMAP",
+    "SEASON2OPEN",
+}
+
+local TERMINAL_CODE_STATUS = {
+    Success = true,
+    AlreadyUsed = true,
+    AlreadyDiscord = true,
+    Nonexistent = true,
+    Expired = true,
+    InvalidInput = true,
+    InvalidTimeConfig = true,
+    LimitReached = true,
+}
+
+local function loadCodeStatus()
+    local out = {}
+
+    if type(readfile)
+            ~= "function"
+        or (
+            type(isfile)
+                == "function"
+            and not isfile(
+                CODE_STATUS_FILE
+            )
+        )
+    then
+        return out
+    end
+
+    local ok, text =
+        pcall(
+            readfile,
+            CODE_STATUS_FILE
+        )
+
+    if not ok
+        or type(text)
+            ~= "string"
+    then
+        return out
+    end
+
+    for line in string.gmatch(
+        text,
+        "[^\r\n]+"
+    ) do
+        local code,
+            status,
+            day =
+                string.match(
+                    line,
+                    "^([^|]+)|([^|]*)|([^|]*)$"
+                )
+
+        if code then
+            out[code] = {
+                Status = status,
+                Day = day,
+            }
+        end
+    end
+
+    return out
+end
+
+local function saveCodeStatus(state)
+    if type(writefile)
+        ~= "function"
+    then
+        return
+    end
+
+    local codes = {}
+
+    for code in pairs(state) do
+        table.insert(
+            codes,
+            code
+        )
+    end
+
+    table.sort(codes)
+
+    local lines = {}
+
+    for _, code in ipairs(codes) do
+        local row =
+            state[code]
+
+        table.insert(
+            lines,
+            tostring(code)
+                .. "|"
+                .. tostring(
+                    row.Status
+                    or ""
+                )
+                .. "|"
+                .. tostring(
+                    row.Day
+                    or ""
+                )
+        )
+    end
+
+    pcall(
+        writefile,
+        CODE_STATUS_FILE,
+        table.concat(
+            lines,
+            "\n"
+        )
+    )
+end
+
+local function isCodeAlreadyUsed(code)
+    if CodesUtil
+        and type(
+            CodesUtil.IsCodeUsed
+        ) == "function"
+    then
+        local ok, used =
+            pcall(function()
+                return CodesUtil:
+                    IsCodeUsed(
+                        LocalPlayer,
+                        code
+                    )
+            end)
+
+        if ok
+            and used
+        then
+            return true
+        end
+    end
+
+    local d =
+        pdata()
+
+    local used =
+        d
+        and d.Codes
+        and d.Codes.UsedCodes
+
+    if type(used)
+        == "table"
+    then
+        return table.find(
+            used,
+            code
+        ) ~= nil
+    end
+
+    return false
+end
+
+local function redeemCode(code)
+    if not CodesController
+        or type(
+            CodesController.RedeemCode
+        ) ~= "function"
+    then
+        return nil,
+            "NO_CODES_CONTROLLER"
+    end
+
+    local packed =
+        table.pack(
+            pcall(function()
+                return CodesController:
+                    RedeemCode(code)
+            end)
+        )
+
+    if not packed[1] then
+        return nil,
+            tostring(
+                packed[2]
+            )
+    end
+
+    return packed[2],
+        packed[3]
+end
+
+local function autoRedeemCodes()
+    if not CodesController then
+        return
+    end
+
+    local state =
+        loadCodeStatus()
+
+    local today =
+        os.date(
+            "%Y-%m-%d"
+        )
+
+    local successCount = 0
+
+    for _, code in ipairs(
+        KNOWN_CODES
+    ) do
+        local saved =
+            state[code]
+
+        local skip =
+            saved
+            and (
+                TERMINAL_CODE_STATUS[
+                    saved.Status
+                ] == true
+                or (
+                    saved.Day == today
+                    and saved.Status
+                        ~= ""
+                )
+            )
+
+        if isCodeAlreadyUsed(code) then
+            state[code] = {
+                Status = "AlreadyUsed",
+                Day = today,
+            }
+
+            skip = true
+        end
+
+        if not skip then
+            local status,
+                rewards =
+                    redeemCode(code)
+
+            if status == "Cooldown" then
+                task.wait(2.2)
+
+                status,
+                    rewards =
+                        redeemCode(code)
+            end
+
+            if status then
+                state[code] = {
+                    Status =
+                        tostring(status),
+                    Day = today,
+                }
+
+                if status
+                    == "Success"
+                then
+                    successCount += 1
+
+                    important(
+                        "Code | "
+                            .. tostring(code)
+                            .. " redeemed"
+                    )
+                end
+            else
+                state[code] = {
+                    Status =
+                        "ClientError",
+                    Day = today,
+                }
+            end
+
+            saveCodeStatus(state)
+
+            task.wait(0.45)
+        end
+    end
+
+    saveCodeStatus(state)
+
+    if successCount > 0 then
+        important(
+            "Codes | "
+                .. tostring(
+                    successCount
+                )
+                .. " new redeemed"
+        )
+    end
+end
+
 snapshot("BEFORE")
+
+autoRedeemCodes()
 
 --========================================================--
 -- SAFE / FREE REWARDS
@@ -1533,7 +1851,7 @@ local function writeRewardAudit()
         or {}
 
     local lines = {
-        "Version=V59.8",
+        "Version=V60.1",
     }
 
     -- DailyQuest pending milestones.
@@ -1679,7 +1997,7 @@ local function writeRewardAudit()
 
     pcall(
         writefile,
-        "IronSoul_LastRewardAudit_V59_8.txt",
+        "IronSoul_LastRewardAudit_V60_1.txt",
         table.concat(
             lines,
             "\n"
@@ -3396,7 +3714,7 @@ end
 inventoryCleanup()
 
 local SMART_FORGE_STATUS_FILE =
-    "IronSoul_LastSmartForge_V59_8.txt"
+    "IronSoul_LastSmartForge_V60_1.txt"
 
 local function writeSmartForgeStatus(lines)
     if type(writefile)
@@ -3611,7 +3929,7 @@ local function smartForgeFullOreBag()
         inventoryCount()
 
     local lines = {
-        "Version=V59.8",
+        "Version=V60.1",
         "OreBefore="
             .. tostring(
                 initialTotal
