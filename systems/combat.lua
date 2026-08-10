@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - SOLO NATIVE REPLAY COMBAT V59.5
+-- IRON SOUL - BAG-AWARE SOLO REPLAY COMBAT V59.6
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -143,7 +143,7 @@ task.wait(2)
 --========================================================--
 
 local ROOT_FOLDER =
-    "IronSoul_SoloNativeReplay_V59_5"
+    "IronSoul_BagAwareCombat_V59_6"
 
 local SESSION =
     os.date("%Y%m%d_%H%M%S")
@@ -4448,6 +4448,10 @@ local function num(v)
     return tonumber(v) or 0
 end
 
+local ForgeUtilReplay
+local EquipmentUtilReplay
+local EquipmentCombatReplay
+
 local function inventoryCountNow()
     local d = pdata()
 
@@ -4464,6 +4468,210 @@ local function inventoryCountNow()
     end
 
     return n
+end
+
+local function oreBagStatus()
+    if not ForgeUtilReplay then
+        return false,
+            nil,
+            nil
+    end
+
+    local ores = nil
+    local max = nil
+    local canAdd = nil
+
+    if type(
+        ForgeUtilReplay.GetOres
+    ) == "function"
+    then
+        local ok, value =
+            pcall(function()
+                return ForgeUtilReplay:
+                    GetOres(
+                        LocalPlayer
+                    )
+            end)
+
+        if ok
+            and type(value)
+                == "table"
+        then
+            ores = value
+        end
+    end
+
+    if type(
+        ForgeUtilReplay.GetMax
+    ) == "function"
+    then
+        local ok, value =
+            pcall(function()
+                return ForgeUtilReplay:
+                    GetMax(
+                        LocalPlayer
+                    )
+            end)
+
+        if ok then
+            max =
+                tonumber(value)
+        end
+    end
+
+    if type(
+        ForgeUtilReplay.CheckCanAdd
+    ) == "function"
+    then
+        local ok, value =
+            pcall(function()
+                return ForgeUtilReplay:
+                    CheckCanAdd(
+                        LocalPlayer
+                    )
+            end)
+
+        if ok then
+            canAdd = value
+        end
+    end
+
+    local used = 0
+
+    if ores then
+        for _, amount in pairs(
+            ores
+        ) do
+            if type(amount)
+                == "number"
+            then
+                used += amount
+            end
+        end
+    end
+
+    local full =
+        canAdd == false
+        or (
+            max
+            and used >= max
+        )
+
+    return full,
+        used,
+        max
+end
+
+local function equipmentBagFull()
+    if not EquipmentUtilReplay
+        or type(
+            EquipmentUtilReplay.CheckCanAdd
+        ) ~= "function"
+    then
+        return false
+    end
+
+    local ok, canAdd =
+        pcall(function()
+            return EquipmentUtilReplay:
+                CheckCanAdd(
+                    LocalPlayer
+                )
+        end)
+
+    return ok
+        and canAdd == false
+end
+
+local function visibleBagFullWarning()
+    local pg =
+        LocalPlayer:
+            FindFirstChildOfClass(
+                "PlayerGui"
+            )
+
+    if not pg then
+        return false
+    end
+
+    for _, obj in ipairs(
+        pg:GetDescendants()
+    ) do
+        if (
+            obj:IsA("TextLabel")
+            or obj:IsA("TextButton")
+        )
+            and effectivelyVisible(obj)
+        then
+            local text =
+                string.lower(
+                    tostring(
+                        obj.Text or ""
+                    )
+                )
+
+            if string.find(
+                text,
+                "bag is full",
+                1,
+                true
+            )
+                or string.find(
+                    text,
+                    "will not give rewards",
+                    1,
+                    true
+                )
+            then
+                return true,
+                    tostring(
+                        obj.Text
+                    )
+            end
+        end
+    end
+
+    return false
+end
+
+local function dungeonBagFullStatus()
+    local warning,
+        warningText =
+            visibleBagFullWarning()
+
+    local oreFull,
+        oreUsed,
+        oreMax =
+            oreBagStatus()
+
+    local equipFull =
+        equipmentBagFull()
+
+    if warning
+        or oreFull
+        or equipFull
+    then
+        local reason =
+            oreFull
+            and "ORE_BAG_FULL"
+            or (
+                equipFull
+                and "EQUIPMENT_BAG_FULL"
+                or "BAG_FULL_WARNING"
+            )
+
+        return true,
+            reason,
+            oreUsed,
+            oreMax,
+            warningText
+    end
+
+    return false,
+        "OK",
+        oreUsed,
+        oreMax,
+        nil
 end
 
 local function equipmentPowerReplay(uuid)
@@ -4645,6 +4853,28 @@ local function betterEquipmentWaiting()
 end
 
 local function lobbyMaintenanceNeeded()
+    local bagFull,
+        bagReason,
+        oreUsed,
+        oreMax =
+            dungeonBagFullStatus()
+
+    if bagFull then
+        return true,
+            bagReason
+            .. (
+                oreUsed
+                and oreMax
+                and (
+                    "_"
+                    .. tostring(oreUsed)
+                    .. "_OF_"
+                    .. tostring(oreMax)
+                )
+                or ""
+            )
+    end
+
     local d = pdata()
 
     if not d then
@@ -4841,10 +5071,13 @@ local ResWorldRound =
 local WorldUtil =
     req("WorldUtil")
 
-local EquipmentUtilReplay =
+ForgeUtilReplay =
+    req("ForgeUtil")
+
+EquipmentUtilReplay =
     req("EquipmentUtil")
 
-local EquipmentCombatReplay =
+EquipmentCombatReplay =
     req("EquipmentCombat")
 
 local STORY_ORDER = {
@@ -5997,6 +6230,71 @@ end
 
 -- Let settlement rewards / clear state replicate.
 task.wait(1.25)
+
+-- V59.6: never replay into a dungeon that the game says will give
+-- no rewards because the bag is full.
+local bagFull,
+    bagReason,
+    oreUsed,
+    oreMax,
+    bagWarning =
+        dungeonBagFullStatus()
+
+if bagFull then
+    important(
+        "Bag full | "
+            .. tostring(
+                bagReason
+            )
+            .. (
+                oreUsed
+                and oreMax
+                and (
+                    " "
+                    .. tostring(oreUsed)
+                    .. "/"
+                    .. tostring(oreMax)
+                )
+                or ""
+            )
+            .. " | returning Lobby"
+    )
+
+    writeJournal({
+        State = "BAG_FULL",
+        Decision = "LOBBY_MAINTENANCE",
+        World = journal.World or "?",
+        Diff = journal.Diff or "?",
+        DirectRepeats = 0,
+        FailureCount = journal.FailureCount or 0,
+        FailPower = journal.FailPower or 0,
+        Level =
+            LocalPlayer:
+                GetAttribute(
+                    "LG_Level"
+                )
+            or 0,
+        Power =
+            LocalPlayer:
+                GetAttribute(
+                    "LG_PowerNew1"
+                )
+            or 0,
+        BagReason = bagReason,
+        OreUsed = oreUsed or "?",
+        OreMax = oreMax or "?",
+        UpdatedAt = os.time(),
+    })
+
+    directLobby(
+        "BAG_FULL_"
+            .. tostring(
+                bagReason
+            )
+    )
+
+    return
+end
 
 local post =
     postRunPlan()
