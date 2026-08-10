@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - LOCAL-ONLY TRANSITION MODULE V60.3
+-- IRON SOUL - STAGING-AWARE TRANSITION MODULE V60.4
 --
 -- Factory module used by systems/combat.lua.
 --
@@ -585,6 +585,75 @@ return function(D)
         return rows
     end
 
+    function Resolver:Snapshot(limit)
+        local rows =
+            candidateRows()
+
+        limit =
+            tonumber(limit)
+            or 8
+
+        local out = {}
+
+        for i = 1,
+            math.min(
+                limit,
+                #rows
+            )
+        do
+            local row =
+                rows[i]
+
+            local mech =
+                row.Mechanism
+
+            table.insert(
+                out,
+                "#"
+                    .. tostring(i)
+                    .. " score="
+                    .. string.format(
+                        "%.1f",
+                        row.Score
+                    )
+                    .. " dist="
+                    .. string.format(
+                        "%.1f",
+                        row.Distance
+                    )
+                    .. " path="
+                    .. fullName(
+                        row.Object
+                    )
+                    .. " prompt="
+                    .. tostring(
+                        mech.Prompt ~= nil
+                    )
+                    .. " touch="
+                    .. tostring(
+                        mech.Touch ~= nil
+                    )
+                    .. " rf="
+                    .. tostring(
+                        mech.RF ~= nil
+                    )
+                    .. " re="
+                    .. tostring(
+                        mech.RE ~= nil
+                    )
+            )
+        end
+
+        if #out == 0 then
+            return "none"
+        end
+
+        return table.concat(
+            out,
+            "\n"
+        )
+    end
+
     local function promptPosition(
         prompt
     )
@@ -625,6 +694,13 @@ return function(D)
 
         local rows =
             candidateRows()
+
+        portalLog(
+            "ADAPTIVE_LOCAL candidates="
+                .. tostring(
+                    #rows
+                )
+        )
 
         local oldRegion =
             CurrentRegion()
