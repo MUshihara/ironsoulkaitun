@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - STRICT PHYSICAL TRANSITION MODULE V60.5
+-- IRON SOUL - GATE-FRONTIER-SAFE TRANSITION MODULE V60.6
 --
 -- Factory module used by systems/combat.lua.
 --
