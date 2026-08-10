@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - PHYSICAL GATE FRONTIER COMBAT V60.6
+-- IRON SOUL - EXACT-GATE + EMPTY-CORRIDOR COMBAT V60.7
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -130,7 +130,7 @@ local CFG = {
     -- Some section portals land in a transition-only staging area rather
     -- than directly inside a RoundWakeTouch combat room.
     STAGING_REGION_DISTANCE = 32,
-    STAGING_IDLE_TIME = 2.8,
+    STAGING_IDLE_TIME = 5.5,
     STAGING_RETRY_COOLDOWN = 2.5,
 
     -- If the room-volume lock is stale after a section teleport, nearby
@@ -143,6 +143,10 @@ local CFG = {
     FRONTIER_DOOR_REGION_MAX = 115,
     FRONTIER_EXACT_BONUS = 22,
     FRONTIER_ROUND_GAP_PENALTY = 14,
+
+    -- Empty traversal corridors appear after side/section stages.
+    EMPTY_TRAVERSAL_IDLE = 2.25,
+    EMPTY_TRAVERSAL_RETRY = 0.65,
 
     -- Only the exact RoundDoor.Portal can be used, never Workspace.Portal.
     SECTION_PORTAL_NEAR_DISTANCE = 85,
@@ -4473,6 +4477,11 @@ getgenv().IronSoulStagingState = {
     LastStatusAt = 0,
 }
 
+getgenv().IronSoulEmptyTraversalState = {
+    Since = nil,
+    LastAttemptAt = 0,
+}
+
 getgenv().IronSoulNavTraceRows =
     getgenv().IronSoulNavTraceRows
     or {}
@@ -4747,6 +4756,9 @@ while not stopReason do
                 getgenv().IronSoulStagingState.NoEnemySince =
                     nil
 
+                getgenv().IronSoulEmptyTraversalState.Since =
+                    nil
+
                 local result =
                     fightEnemy(enemy)
 
@@ -4800,6 +4812,205 @@ while not stopReason do
                     spatialLiveEnemyCount(
                         CFG.SPATIAL_ENEMY_RADIUS
                     )
+
+                --======================================================--
+                -- V60.7 EMPTY TRAVERSAL CORRIDOR
+                --
+                -- W1D3 can:
+                --   main route -> teleport green side-stage
+                --   finish green -> teleport back to an EMPTY corridor
+                --   open 1-2 traversal gates -> green/blue portal
+                --   next real enemy room
+                --
+                -- These empty gates do not necessarily create enemies or a
+                -- useful RoundWakeTouch state. Therefore navigation must
+                -- continue even when we are technically inside a wake region.
+                --======================================================--
+                if localCount == 0
+                    and nearbyEnemyCount == 0
+                    and not currentDragonEgg()
+                then
+                    if not getgenv().IronSoulEmptyTraversalState.Since then
+                        getgenv().IronSoulEmptyTraversalState.Since =
+                            os.clock()
+                    end
+
+                    local emptyAge =
+                        os.clock()
+                        - getgenv().IronSoulEmptyTraversalState.Since
+
+                    if emptyAge
+                            >= CFG.EMPTY_TRAVERSAL_IDLE
+                        and os.clock()
+                            - getgenv().IronSoulEmptyTraversalState.LastAttemptAt
+                            >= CFG.EMPTY_TRAVERSAL_RETRY
+                    then
+                        getgenv().IronSoulEmptyTraversalState.LastAttemptAt =
+                            os.clock()
+
+                        -- PHYSICAL GATE FIRST.
+                        local corridorGate =
+                            getgenv().IronSoulSelectFrontierDoor(
+                                nil
+                            )
+
+                        if corridorGate then
+                            getgenv().IronSoulNavTrace(
+                                "EMPTY_GATE round="
+                                    .. tostring(
+                                        corridorGate.RoundNum
+                                    )
+                                    .. " dist="
+                                    .. string.format(
+                                        "%.1f",
+                                        corridorGate.PlayerDistance
+                                    )
+                                    .. " pos="
+                                    .. tostring(
+                                        corridorGate.PromptPos
+                                    )
+                            )
+
+                            local gateOk,
+                                gateResult =
+                                    openAndCrossSelectedDoor(
+                                        corridorGate
+                                    )
+
+                            if gateOk then
+                                portalsInvoked += 1
+
+                                writePhaseAudit(
+                                    "EMPTY_CORRIDOR_GATE",
+                                    corridorGate.RoundNum,
+                                    gateResult
+                                )
+
+                                getgenv().IronSoulNavTrace(
+                                    "EMPTY_GATE_OPENED round="
+                                        .. tostring(
+                                            corridorGate.RoundNum
+                                        )
+                                        .. " result="
+                                        .. tostring(
+                                            gateResult
+                                        )
+                                        .. " Pos="
+                                        .. tostring(
+                                            Root.Position
+                                        )
+                                )
+
+                                lockRegion(
+                                    "AFTER_EMPTY_CORRIDOR_GATE"
+                                )
+
+                                CurrentCombatRound =
+                                    gameRound()
+
+                                lastRound =
+                                    gameRound()
+                                    or lastRound
+
+                                noLocalEnemySince =
+                                    nil
+
+                                getgenv().IronSoulStagingState.NoEnemySince =
+                                    nil
+
+                                -- Keep EmptyTraversal.Since active so another
+                                -- adjacent empty gate can be opened quickly.
+                                task.wait(0.28)
+
+                                continue
+                            else
+                                getgenv().IronSoulNavTrace(
+                                    "EMPTY_GATE_RETRY round="
+                                        .. tostring(
+                                            corridorGate.RoundNum
+                                        )
+                                        .. " result="
+                                        .. tostring(
+                                            gateResult
+                                        )
+                                )
+
+                                task.wait(0.20)
+
+                                continue
+                            end
+                        end
+
+                        -- No physical gate. Now and only now try a LOCAL
+                        -- portal/exit. Strict transition module still blocks
+                        -- generic Workspace.Portal and direct RoundDoor RF.
+                        local resolver =
+                            getgenv().IronSoulTransitionResolver
+
+                        if resolver then
+                            local moved,
+                                moveResult =
+                                    resolver:
+                                        TryAdaptive()
+
+                            if moved then
+                                portalsInvoked += 1
+
+                                writePhaseAudit(
+                                    "EMPTY_CORRIDOR_PORTAL",
+                                    completedRound,
+                                    moveResult
+                                )
+
+                                getgenv().IronSoulNavTrace(
+                                    "EMPTY_PORTAL result="
+                                        .. tostring(
+                                            moveResult
+                                        )
+                                        .. " Pos="
+                                        .. tostring(
+                                            Root.Position
+                                        )
+                                        .. " GameRound="
+                                        .. tostring(
+                                            gameRound()
+                                        )
+                                )
+
+                                important(
+                                    "Phase | empty corridor"
+                                )
+
+                                lockRegion(
+                                    "AFTER_EMPTY_CORRIDOR_PORTAL"
+                                )
+
+                                CurrentCombatRound =
+                                    gameRound()
+
+                                lastRound =
+                                    gameRound()
+                                    or lastRound
+
+                                noLocalEnemySince =
+                                    nil
+
+                                getgenv().IronSoulStagingState.NoEnemySince =
+                                    nil
+
+                                getgenv().IronSoulEmptyTraversalState.Since =
+                                    nil
+
+                                task.wait(0.38)
+
+                                continue
+                            end
+                        end
+                    end
+                else
+                    getgenv().IronSoulEmptyTraversalState.Since =
+                        nil
+                end
 
                 if localCount == 0
                     and nearbyEnemyCount == 0
@@ -5069,6 +5280,14 @@ while not stopReason do
                                         .. tostring(
                                             nearbyEnemyCount
                                         )
+                                        .. "\nEmptyTraversalAge="
+                                        .. tostring(
+                                            getgenv().IronSoulEmptyTraversalState.Since
+                                            and (
+                                                os.clock()
+                                                - getgenv().IronSoulEmptyTraversalState.Since
+                                            )
+                                        )
                                         .. "\nGlobalEnemies="
                                         .. tostring(
                                             #liveEnemies()
@@ -5201,25 +5420,19 @@ while not stopReason do
                     )
 
                 local frontier =
-                    getgenv().IronSoulSelectFrontierDoor(
-                        completedRound
-                    )
+                    nil
 
-                -- Prefer the frontier door if:
-                --   * exact selector found nothing, OR
-                --   * the exact door is substantially farther away.
-                --
-                -- This prevents walking back to an old duplicate branch door
-                -- after a section teleport.
-                if frontier
-                    and (
-                        not row
-                        or not row.PlayerDistance
-                        or frontier.PlayerDistance
-                            + 24
-                            < row.PlayerDistance
-                    )
-                then
+                -- V60.7:
+                -- An authoritative exact completedRound door always wins.
+                -- Only use the broader physical frontier if NO exact door
+                -- exists. V60.6 could replace expected Round4 with a nearby
+                -- Round3 gate, which caused route/backtracking confusion.
+                if not row then
+                    frontier =
+                        getgenv().IronSoulSelectFrontierDoor(
+                            completedRound
+                        )
+
                     row =
                         frontier
                 end
@@ -5293,7 +5506,6 @@ while not stopReason do
                 -- If old door logic has been unable to progress for a while,
                 -- run the generalized high-confidence resolver.
                 if not row
-                    and not frontier
                     and not adaptiveDone
                     and state == "GATE"
                     and getgenv().IronSoulAdaptiveGateState.EnteredAt
