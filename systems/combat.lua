@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - EXACT-GATE + EMPTY-CORRIDOR COMBAT V60.7
+-- IRON SOUL - TELEMETRY BUG-FINDING COMBAT V60.8
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -147,6 +147,11 @@ local CFG = {
     -- Empty traversal corridors appear after side/section stages.
     EMPTY_TRAVERSAL_IDLE = 2.25,
     EMPTY_TRAVERSAL_RETRY = 0.65,
+
+    -- Compact rolling telemetry.
+    TELEMETRY_HEARTBEAT = 2.0,
+    TELEMETRY_STALL_AFTER = 7.0,
+    TELEMETRY_FULL_EVERY = 6.0,
 
     -- Only the exact RoundDoor.Portal can be used, never Workspace.Portal.
     SECTION_PORTAL_NEAR_DISTANCE = 85,
@@ -4535,6 +4540,138 @@ getgenv().IronSoulNavTrace(
         )
 )
 
+getgenv().IronSoulTelemetry =
+    nil
+
+getgenv().IronSoulTelemetryState =
+    function()
+        return {
+            State = state,
+            LastRound = lastRound,
+            CompletedRound =
+                completedRound,
+            PendingGateRound =
+                pendingGateRound,
+            CurrentCombatRound =
+                CurrentCombatRound,
+            CurrentCombatRegion =
+                CurrentCombatRegion,
+            PortalsInvoked =
+                portalsInvoked,
+            Deaths = deaths,
+        }
+    end
+
+do
+    local loadRaw =
+        getgenv().IronSoulLoadRaw
+
+    if type(loadRaw)
+        == "function"
+    then
+        local ok, factory =
+            loadRaw(
+                "systems/telemetry.lua"
+            )
+
+        if ok
+            and type(factory)
+                == "function"
+        then
+            local builtOk,
+                built =
+                    pcall(
+                        factory,
+                        {
+                            LocalPlayer =
+                                LocalPlayer,
+                            CFG = CFG,
+
+                            getRoot =
+                                function()
+                                    return Root
+                                end,
+
+                            getState =
+                                getgenv().IronSoulTelemetryState,
+
+                            gameRound =
+                                gameRound,
+
+                            getCurrentRegion =
+                                function()
+                                    return CurrentCombatRegion
+                                end,
+
+                            nearestWakeRegion =
+                                nearestWakeRegion,
+
+                            boxDistance =
+                                boxDistance,
+
+                            fullName =
+                                fullName,
+
+                            liveEnemies =
+                                liveEnemies,
+
+                            localLiveEnemies =
+                                localLiveEnemies,
+
+                            modelRoot =
+                                modelRoot,
+
+                            enemyHealth =
+                                enemyHealth,
+
+                            physicalDoorRows =
+                                physicalDoorRows,
+
+                            exactRoundDoorPortal =
+                                exactRoundDoorPortal,
+
+                            currentDragonEgg =
+                                currentDragonEgg,
+
+                            dragonEggActive =
+                                dragonEggActive,
+
+                            dragonEggBroken =
+                                dragonEggBroken,
+
+                            settlementDetected =
+                                settlementDetected,
+                        }
+                    )
+
+            if builtOk
+                and type(built)
+                    == "table"
+            then
+                getgenv().IronSoulTelemetry =
+                    built
+
+                built:
+                    Start()
+
+                built:
+                    Event(
+                        "START",
+                        "controller initialized"
+                    )
+            else
+                important(
+                    "Telemetry init failed"
+                )
+            end
+        else
+            important(
+                "Telemetry load failed"
+            )
+        end
+    end
+end
+
 lockRegion(
     "START"
 )
@@ -4750,6 +4887,34 @@ while not stopReason do
             end
 
             if enemy then
+                if getgenv().IronSoulTelemetry then
+                    local eroot =
+                        modelRoot(enemy)
+
+                    getgenv().IronSoulTelemetry:
+                        Event(
+                            "TARGET",
+                            tostring(
+                                enemy.Name
+                            )
+                                .. " hp="
+                                .. tostring(
+                                    enemyHealth(
+                                        enemy
+                                    )
+                                )
+                                .. " dist="
+                                .. tostring(
+                                    Root
+                                    and eroot
+                                    and (
+                                        eroot.Position
+                                        - Root.Position
+                                    ).Magnitude
+                                )
+                        )
+                end
+
                 noLocalEnemySince =
                     nil
 
@@ -4761,6 +4926,20 @@ while not stopReason do
 
                 local result =
                     fightEnemy(enemy)
+
+                if getgenv().IronSoulTelemetry then
+                    getgenv().IronSoulTelemetry:
+                        Event(
+                            "TARGET_RESULT",
+                            tostring(
+                                enemy.Name
+                            )
+                                .. " => "
+                                .. tostring(
+                                    result
+                                )
+                        )
+                end
 
                 if result == "SETTLEMENT" then
                     stopReason =
@@ -4855,6 +5034,21 @@ while not stopReason do
                             )
 
                         if corridorGate then
+                            if getgenv().IronSoulTelemetry then
+                                getgenv().IronSoulTelemetry:
+                                    Event(
+                                        "EMPTY_GATE",
+                                        "round="
+                                            .. tostring(
+                                                corridorGate.RoundNum
+                                            )
+                                            .. " dist="
+                                            .. tostring(
+                                                corridorGate.PlayerDistance
+                                            )
+                                    )
+                            end
+
                             getgenv().IronSoulNavTrace(
                                 "EMPTY_GATE round="
                                     .. tostring(
@@ -4961,6 +5155,16 @@ while not stopReason do
                                     completedRound,
                                     moveResult
                                 )
+
+                                if getgenv().IronSoulTelemetry then
+                                    getgenv().IronSoulTelemetry:
+                                        Event(
+                                            "EMPTY_PORTAL",
+                                            tostring(
+                                                moveResult
+                                            )
+                                        )
+                                end
 
                                 getgenv().IronSoulNavTrace(
                                     "EMPTY_PORTAL result="
@@ -5325,6 +5529,17 @@ while not stopReason do
                     elseif eggResult
                         == "DONE"
                     then
+                        if getgenv().IronSoulTelemetry then
+                            getgenv().IronSoulTelemetry:
+                                Event(
+                                    "EGG_DONE",
+                                    "GameRound="
+                                        .. tostring(
+                                            gameRound()
+                                        )
+                                )
+                        end
+
                         getgenv().IronSoulNavTrace(
                             "EGG_DONE Pos="
                                 .. tostring(
@@ -5438,11 +5653,47 @@ while not stopReason do
                 end
 
                 if row then
+                        if getgenv().IronSoulTelemetry then
+                            getgenv().IronSoulTelemetry:
+                                Event(
+                                    "GATE_CHOSEN",
+                                    "round="
+                                        .. tostring(
+                                            row.RoundNum
+                                        )
+                                        .. " switch="
+                                        .. tostring(
+                                            row.Switch
+                                        )
+                                        .. " pos="
+                                        .. tostring(
+                                            row.PromptPos
+                                        )
+                                )
+                        end
+
                         local ok,
                             result =
                                 openAndCrossSelectedDoor(
                                     row
                                 )
+
+                        if getgenv().IronSoulTelemetry then
+                            getgenv().IronSoulTelemetry:
+                                Event(
+                                    "GATE_RESULT",
+                                    "round="
+                                        .. tostring(
+                                            row.RoundNum
+                                        )
+                                        .. " ok="
+                                        .. tostring(ok)
+                                        .. " result="
+                                        .. tostring(
+                                            result
+                                        )
+                                )
+                        end
 
                         if ok then
                             portalsInvoked += 1
