@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - MODULAR ADAPTIVE PHASE COMBAT V60.2F
+-- IRON SOUL - DOOR-FIRST ADAPTIVE COMBAT V60.3
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -2363,7 +2363,8 @@ end
 
 local function maybeEnterSectionPortal(
     oldRegion,
-    outward
+    outward,
+    timeoutOverride
 )
     if not Root then
         return false
@@ -2380,9 +2381,15 @@ local function maybeEnterSectionPortal(
 
     -- The exact RoundDoor.Portal can MOVE after a door opens.
     -- V55.1 checked it only once; final portal often streamed/moved later.
+    local timeout =
+        tonumber(
+            timeoutOverride
+        )
+        or CFG.SECTION_PORTAL_APPEAR_TIMEOUT
+
     while os.clock()
         - started
-        < CFG.SECTION_PORTAL_APPEAR_TIMEOUT
+        < timeout
     do
         local evidence =
             portalTeleportEvidence(
@@ -2729,6 +2736,38 @@ do
             )
         end
     end
+end
+
+local function writePhaseAudit(
+    route,
+    completed,
+    result
+)
+    if type(writefile)
+        ~= "function"
+    then
+        return
+    end
+
+    pcall(
+        writefile,
+        "IronSoul_LastPhaseTransition_V60_3.txt",
+        "Route="
+            .. tostring(route)
+            .. "\nCompletedRound="
+            .. tostring(completed)
+            .. "\nGameRound="
+            .. tostring(
+                gameRound()
+            )
+            .. "\nResult="
+            .. tostring(result)
+            .. "\nPlayerPos="
+            .. tostring(
+                Root
+                and Root.Position
+            )
+    )
 end
 
 
@@ -4360,79 +4399,19 @@ while not stopReason do
                 local adaptiveDone =
                     false
 
-                -- The visible "Room Cleared" signal means the stage may use
-                -- a section portal rather than another physical branch door.
-                -- First try the exact W1D3-validated RoundDoor.Portal RF.
-                if (getgenv().IronSoulTransitionResolver and getgenv().IronSoulTransitionResolver:RoomClearedVisible())
-                    and os.clock()
-                        - getgenv().IronSoulAdaptiveGateState.LastAttemptAt
-                        >= CFG.ADAPTIVE_RETRY_COOLDOWN
-                then
-                    getgenv().IronSoulAdaptiveGateState.LastAttemptAt =
-                        os.clock()
+                -- V60.3:
+                -- DOOR-FIRST. A visible Room Cleared banner is NOT enough
+                -- reason to fire a section portal. Some maps keep later
+                -- section portals replicated early, and invoking them can
+                -- jump straight toward the boss.
+                --
+                -- Always resolve the authoritative completedRound door first.
+                local row =
+                    selectDoorForCompletedRound(
+                        completedRound
+                    )
 
-                    local resolver =
-                        getgenv().IronSoulTransitionResolver
-
-                    local ok,
-                        result =
-                            resolver
-                            and resolver:
-                                TryFastExactPortal()
-
-                    if ok then
-                        adaptiveDone =
-                            true
-
-                        portalsInvoked += 1
-
-                        if result
-                            == "SETTLEMENT"
-                        then
-                            stopReason =
-                                "SETTLEMENT_REACHED"
-                        else
-                            state =
-                                "COMBAT"
-
-                            CurrentState =
-                                state
-
-                            lockRegion(
-                                "AFTER_ADAPTIVE_PHASE"
-                            )
-
-                            CurrentCombatRound =
-                                gameRound()
-
-                            lastRound =
-                                gameRound()
-                                or lastRound
-
-                            completedRound =
-                                nil
-
-                            pendingGateRound =
-                                nil
-
-                            noLocalEnemySince =
-                                nil
-
-                            getgenv().IronSoulAdaptiveGateState.EnteredAt =
-                                nil
-
-                            task.wait(0.45)
-                        end
-                    end
-                end
-
-                if not adaptiveDone then
-                    local row =
-                        selectDoorForCompletedRound(
-                            completedRound
-                        )
-
-                    if row then
+                if row then
                         local ok,
                             result =
                                 openAndCrossSelectedDoor(
@@ -4441,6 +4420,12 @@ while not stopReason do
 
                         if ok then
                             portalsInvoked += 1
+
+                            writePhaseAudit(
+                                "ROUND_DOOR",
+                                completedRound,
+                                result
+                            )
 
                             if result
                                 == "SETTLEMENT"
@@ -4485,17 +4470,17 @@ while not stopReason do
 
                             task.wait(0.08)
                         end
-                    else
-                        gateRetryAt =
-                            os.clock() + 0.30
+                else
+                    gateRetryAt =
+                        os.clock() + 0.30
 
-                        task.wait(0.08)
-                    end
+                    task.wait(0.08)
                 end
 
                 -- If old door logic has been unable to progress for a while,
                 -- run the generalized high-confidence resolver.
-                if not adaptiveDone
+                if not row
+                    and not adaptiveDone
                     and state == "GATE"
                     and getgenv().IronSoulAdaptiveGateState.EnteredAt
                     and os.clock()
@@ -4508,17 +4493,39 @@ while not stopReason do
                     getgenv().IronSoulAdaptiveGateState.LastAttemptAt =
                         os.clock()
 
-                    local resolver =
-                        getgenv().IronSoulTransitionResolver
-
+                    -- First use the OLD proven physical portal handshake.
+                    -- It only acts when the exact RoundDoor.Portal is near
+                    -- the player, so it cannot remotely skip future sections.
                     local ok,
                         result =
-                            resolver
-                            and resolver:
-                                TryAdaptive()
+                            maybeEnterSectionPortal(
+                                CurrentCombatRegion,
+                                nil,
+                                2.25
+                            )
+
+                    -- If there is no nearby exact portal, allow the modular
+                    -- resolver to look for a DIFFERENT local gate/exit type.
+                    if not ok then
+                        local resolver =
+                            getgenv().IronSoulTransitionResolver
+
+                        if resolver then
+                            ok,
+                                result =
+                                    resolver:
+                                        TryAdaptive()
+                        end
+                    end
 
                     if ok then
                         portalsInvoked += 1
+
+                        writePhaseAudit(
+                            "NO_DOOR_FALLBACK",
+                            completedRound,
+                            result
+                        )
 
                         if result
                             == "SETTLEMENT"
