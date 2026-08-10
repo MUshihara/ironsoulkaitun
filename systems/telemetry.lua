@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - NATIVE-MOTION TELEMETRY V61.1
+-- IRON SOUL - ROUTE-GUIDED TELEMETRY V61.2
 --========================================================--
 
 return function(D)
@@ -19,10 +19,10 @@ return function(D)
     local started = false
 
     local TRACE_FILE =
-        "IronSoul_Telemetry_V61_1.txt"
+        "IronSoul_Telemetry_V61_2.txt"
 
     local STATE_FILE =
-        "IronSoul_LastState_V61_1.txt"
+        "IronSoul_LastState_V61_2.txt"
 
     local function sv(v)
         if v == nil then
@@ -397,7 +397,7 @@ return function(D)
         end)
 
         local lines = {
-            "Version=V61.1",
+            "Version=V61.2",
             "Label="
                 .. sv(label),
             "State="
@@ -469,6 +469,11 @@ return function(D)
             "ExactPortalDistance="
                 .. sv(
                     portalDist
+                ),
+            "ExactPortalPos="
+                .. sv(
+                    portal
+                    and portal.Position
                 ),
             "ExactPortalRound="
                 .. sv(
