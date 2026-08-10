@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - NATIVE-MOTION TRANSITION COMBAT V61.1
+-- IRON SOUL - ROUTE-GUIDED TRANSITION COMBAT V61.2
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -174,6 +174,16 @@ local CFG = {
     NATIVE_MOTION_SETTLE = 0.10,
     NATIVE_MOTION_MAX_DIRECTIONS = 4,
     NATIVE_MOTION_MOVETO_FALLBACK = 2.0,
+
+    -- V61.2 guided transition walking.
+    GUIDED_WALK = true,
+    GUIDED_WALK_MAX_TIME = 8.0,
+    GUIDED_WALK_REISSUE = 0.22,
+    GUIDED_WALK_PROGRESS_LOG = 1.0,
+    GUIDED_WALK_STALL_TIME = 1.6,
+    GUIDED_WALK_MIN_PROGRESS = 1.0,
+    GUIDED_WALK_TARGET_RADIUS = 7.0,
+    GUIDED_WALK_ONLY_OUTSIDE_REGION = 38,
 
     -- Adaptive combat position.
     ADAPTIVE_COMBAT_POSITION = true,
@@ -3454,6 +3464,13 @@ do
                                             )
                                     end
                                 end,
+
+                            hasCombatObjective =
+                                function()
+                                    return #liveEnemies() > 0
+                                        or currentDragonEgg()
+                                            ~= nil
+                                end,
                         }
                     )
 
@@ -5625,112 +5642,42 @@ while not stopReason do
                         getgenv().IronSoulEmptyTraversalState.LastAttemptAt =
                             os.clock()
 
-                        -- First reproduce a tiny genuine movement input.
-                        -- This is intentionally before selecting another old
-                        -- traversal gate because the current checkpoint may
-                        -- already be waiting for movement to teleport onward.
-                        local resolver =
-                            getgenv().IronSoulTransitionResolver
-
-                        if CFG.NATIVE_MOTION_PULSE
-                            and resolver
-                            and type(
-                                resolver.PulseNativeMovement
-                            ) == "function"
-                        then
-                            local moved,
-                                moveResult =
-                                    resolver:
-                                        PulseNativeMovement(
-                                            CurrentCombatRegion,
-                                            nil,
-                                            "EMPTY_CORRIDOR"
-                                        )
-
-                            if moved then
-                                portalsInvoked += 1
-
-                                writePhaseAudit(
-                                    "NATIVE_MOTION",
-                                    completedRound,
-                                    moveResult
-                                )
-
-                                getgenv().IronSoulNavTrace(
-                                    "NATIVE_MOTION result="
-                                        .. tostring(
-                                            moveResult
-                                        )
-                                        .. " Pos="
-                                        .. tostring(
-                                            Root.Position
-                                        )
-                                )
-
-                                lockRegion(
-                                    "AFTER_NATIVE_MOTION"
-                                )
-
-                                CurrentCombatRound =
-                                    gameRound()
-
-                                lastRound =
-                                    gameRound()
-                                    or lastRound
-
-                                noLocalEnemySince =
-                                    nil
-
-                                getgenv().IronSoulStagingState.NoEnemySince =
-                                    nil
-
-                                getgenv().IronSoulEmptyTraversalState.Since =
-                                    nil
-
-                                task.wait(0.22)
-
-                                continue
-                            end
-                        end
-
-                        -- If movement did NOT wake a transition, then use a
-                        -- real physical gate.
-                        local corridorGate =
-                            getgenv().IronSoulSelectFrontierDoor(
-                                nil
+                        -- V61.2:
+                        -- Do NOT chase arbitrary older frontier gates here.
+                        -- If GameRound=5, a Round3 gate is historical and can
+                        -- physically pull us backward even though it remains
+                        -- replicated.
+                        --
+                        -- Only an exact current-1 closed door is eligible.
+                        local expectedEmptyRound =
+                            gameRound()
+                            and (
+                                gameRound() - 1
                             )
+                            or nil
+
+                        local corridorGate =
+                            expectedEmptyRound
+                            and selectDoorForCompletedRound(
+                                expectedEmptyRound
+                            )
+                            or nil
 
                         if corridorGate then
                             if getgenv().IronSoulTelemetry then
                                 getgenv().IronSoulTelemetry:
                                     Event(
-                                        "EMPTY_GATE",
+                                        "EMPTY_EXPECTED_GATE",
                                         "round="
                                             .. tostring(
                                                 corridorGate.RoundNum
                                             )
-                                            .. " dist="
+                                            .. " pos="
                                             .. tostring(
-                                                corridorGate.PlayerDistance
+                                                corridorGate.PromptPos
                                             )
                                     )
                             end
-
-                            getgenv().IronSoulNavTrace(
-                                "EMPTY_GATE round="
-                                    .. tostring(
-                                        corridorGate.RoundNum
-                                    )
-                                    .. " dist="
-                                    .. string.format(
-                                        "%.1f",
-                                        corridorGate.PlayerDistance
-                                    )
-                                    .. " pos="
-                                    .. tostring(
-                                        corridorGate.PromptPos
-                                    )
-                            )
 
                             local gateOk,
                                 gateResult =
@@ -5742,28 +5689,13 @@ while not stopReason do
                                 portalsInvoked += 1
 
                                 writePhaseAudit(
-                                    "EMPTY_CORRIDOR_GATE",
+                                    "EMPTY_EXPECTED_GATE",
                                     corridorGate.RoundNum,
                                     gateResult
                                 )
 
-                                getgenv().IronSoulNavTrace(
-                                    "EMPTY_GATE_OPENED round="
-                                        .. tostring(
-                                            corridorGate.RoundNum
-                                        )
-                                        .. " result="
-                                        .. tostring(
-                                            gateResult
-                                        )
-                                        .. " Pos="
-                                        .. tostring(
-                                            Root.Position
-                                        )
-                                )
-
                                 lockRegion(
-                                    "AFTER_EMPTY_CORRIDOR_GATE"
+                                    "AFTER_EMPTY_EXPECTED_GATE"
                                 )
 
                                 CurrentCombatRound =
@@ -5779,26 +5711,76 @@ while not stopReason do
                                 getgenv().IronSoulStagingState.NoEnemySince =
                                     nil
 
-                                -- Keep EmptyTraversal.Since active so another
-                                -- adjacent empty gate can be opened quickly.
                                 task.wait(0.28)
 
                                 continue
-                            else
-                                getgenv().IronSoulNavTrace(
-                                    "EMPTY_GATE_RETRY round="
-                                        .. tostring(
-                                            corridorGate.RoundNum
-                                        )
-                                        .. " result="
-                                        .. tostring(
-                                            gateResult
-                                        )
-                                )
+                            end
+                        end
 
-                                task.wait(0.20)
+                        -- If there is no authoritative door and the character
+                        -- is already outside the room volume, walk toward the
+                        -- actual unlocked section portal instead of wandering.
+                        local currentRegionDist =
+                            CurrentCombatRegion
+                            and boxDistance(
+                                CurrentCombatRegion,
+                                Root.Position
+                            )
+                            or math.huge
 
-                                continue
+                        if CFG.GUIDED_WALK
+                            and currentRegionDist
+                                >= CFG.GUIDED_WALK_ONLY_OUTSIDE_REGION
+                        then
+                            local resolver =
+                                getgenv().IronSoulTransitionResolver
+
+                            if resolver
+                                and type(
+                                    resolver.GuidedWalk
+                                ) == "function"
+                            then
+                                local moved,
+                                    moveResult =
+                                        resolver:
+                                            GuidedWalk(
+                                                CurrentCombatRegion,
+                                                "EMPTY_CORRIDOR"
+                                            )
+
+                                if moved then
+                                    portalsInvoked += 1
+
+                                    writePhaseAudit(
+                                        "GUIDED_WALK",
+                                        completedRound,
+                                        moveResult
+                                    )
+
+                                    lockRegion(
+                                        "AFTER_GUIDED_WALK"
+                                    )
+
+                                    CurrentCombatRound =
+                                        gameRound()
+
+                                    lastRound =
+                                        gameRound()
+                                        or lastRound
+
+                                    noLocalEnemySince =
+                                        nil
+
+                                    getgenv().IronSoulStagingState.NoEnemySince =
+                                        nil
+
+                                    getgenv().IronSoulEmptyTraversalState.Since =
+                                        nil
+
+                                    task.wait(0.25)
+
+                                    continue
+                                end
                             end
                         end
 
@@ -6047,43 +6029,31 @@ while not stopReason do
                             local resolver =
                                 getgenv().IronSoulTransitionResolver
 
-                            if CFG.NATIVE_MOTION_PULSE
+                            if CFG.GUIDED_WALK
                                 and resolver
                                 and type(
-                                    resolver.PulseNativeMovement
+                                    resolver.GuidedWalk
                                 ) == "function"
                             then
-                                local pulseMoved,
-                                    pulseResult =
+                                local guidedMoved,
+                                    guidedResult =
                                         resolver:
-                                            PulseNativeMovement(
+                                            GuidedWalk(
                                                 CurrentCombatRegion,
-                                                nil,
                                                 "STAGING"
                                             )
 
-                                if pulseMoved then
+                                if guidedMoved then
                                     portalsInvoked += 1
 
                                     writePhaseAudit(
-                                        "NATIVE_MOTION_STAGING",
+                                        "GUIDED_WALK_STAGING",
                                         completedRound,
-                                        pulseResult
-                                    )
-
-                                    getgenv().IronSoulNavTrace(
-                                        "STAGING_NATIVE_MOTION result="
-                                            .. tostring(
-                                                pulseResult
-                                            )
-                                            .. " Pos="
-                                            .. tostring(
-                                                Root.Position
-                                            )
+                                        guidedResult
                                     )
 
                                     lockRegion(
-                                        "AFTER_STAGING_NATIVE_MOTION"
+                                        "AFTER_GUIDED_STAGING"
                                     )
 
                                     CurrentCombatRound =
