@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - ADAPTIVE PHASE COMBAT V60.1
+-- IRON SOUL - MODULAR ADAPTIVE PHASE COMBAT V60.2F
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -151,7 +151,7 @@ task.wait(2)
 --========================================================--
 
 local ROOT_FOLDER =
-    "IronSoul_AdaptivePhaseCombat_V60_1"
+    "IronSoul_ModularAdaptiveCombat_V60_2R"
 
 local SESSION =
     os.date("%Y%m%d_%H%M%S")
@@ -2633,922 +2633,102 @@ local function maybeEnterSectionPortal(
 end
 
 --========================================================--
--- V60.1 ADAPTIVE PHASE TRANSITION RESOLVER
+-- V60.2 ADAPTIVE PHASE TRANSITION MODULE
 --
--- World1 Diff3 validation:
---   Room Cleared
---   Workspace.RoundDoor.Portal
---   Root.RF + LocalRoundPortal + ServerRoundPortal
---   direct Root.RF:InvokeServer()
---   VERIFIED player position jump = 1072 studs
---
--- Important:
---   generic Workspace.Portal remains BLOCKED because an older map proved
---   that object can be a huge safety/reset volume.
+-- Kept outside combat.lua to avoid Luau's local-register limit.
 --========================================================--
 
-local function roomClearedVisibleAdaptive()
-    local pg =
-        LocalPlayer:
-            FindFirstChildOfClass(
-                "PlayerGui"
+do
+    local loadRaw =
+        getgenv().IronSoulLoadRaw
+
+    getgenv().IronSoulTransitionResolver =
+        nil
+
+    if type(loadRaw)
+        == "function"
+    then
+        local ok, factory =
+            loadRaw(
+                "systems/transition.lua"
             )
 
-    if not pg then
-        return false
-    end
-
-    for _, obj in ipairs(
-        pg:GetDescendants()
-    ) do
-        if (
-            obj:IsA("TextLabel")
-            or obj:IsA("TextButton")
-        )
-            and effectivelyVisible(obj)
+        if ok
+            and type(factory)
+                == "function"
         then
-            local text =
-                string.lower(
-                    tostring(
-                        obj.Text or ""
+            local builtOk,
+                built =
+                    pcall(
+                        factory,
+                        {
+                            Players = Players,
+                            ReplicatedStorage =
+                                ReplicatedStorage,
+                            LocalPlayer =
+                                LocalPlayer,
+
+                            CFG = CFG,
+
+                            getRoot =
+                                function()
+                                    return Root
+                                end,
+
+                            getCurrentRegion =
+                                function()
+                                    return CurrentCombatRegion
+                                end,
+
+                            effectivelyVisible =
+                                effectivelyVisible,
+
+                            portalTeleportEvidence =
+                                portalTeleportEvidence,
+
+                            exactRoundDoorPortal =
+                                exactRoundDoorPortal,
+
+                            gameRound =
+                                gameRound,
+
+                            fullName =
+                                fullName,
+
+                            placeCharacter =
+                                placeCharacter,
+
+                            firetouchinterest =
+                                firetouchinterest,
+
+                            fireproximityprompt =
+                                fireproximityprompt,
+
+                            important =
+                                important,
+
+                            portalLog =
+                                portalLog,
+                        }
                     )
-                )
 
-            if string.find(
-                text,
-                "room cleared",
-                1,
-                true
-            )
+            if builtOk
+                and type(built)
+                    == "table"
             then
-                return true
-            end
-        end
-    end
-
-    return false
-end
-
-local function adaptiveTransitionEvidence(
-    beforePos,
-    oldRegion,
-    wasRoomCleared
-)
-    local hit =
-        portalTeleportEvidence(
-            beforePos,
-            oldRegion
-        )
-
-    if hit then
-        return hit
-    end
-
-    if wasRoomCleared
-        and not roomClearedVisibleAdaptive()
-    then
-        return "ROOM_CLEARED_GUI_GONE"
-    end
-end
-
-local function exactPortalMechanism()
-    local portalRoot =
-        exactRoundDoorPortal()
-
-    if not portalRoot
-        or not portalRoot.Parent
-    then
-        return nil
-    end
-
-    local rf =
-        portalRoot:
-            FindFirstChild(
-                "RF"
-            )
-
-    local localPortal =
-        portalRoot:
-            FindFirstChild(
-                "LocalRoundPortal"
-            )
-
-    local serverPortal =
-        portalRoot:
-            FindFirstChild(
-                "ServerRoundPortal"
-            )
-
-    if not rf
-        or not rf:IsA(
-            "RemoteFunction"
-        )
-        or not (
-            localPortal
-            or serverPortal
-        )
-    then
-        return nil
-    end
-
-    local roundNum =
-        tonumber(
-            portalRoot:
-                GetAttribute(
-                    "RoundNum"
+                getgenv().IronSoulTransitionResolver =
+                    built
+            else
+                important(
+                    "Transition module init failed"
                 )
-        )
-
-    local current =
-        gameRound()
-
-    local unlocked =
-        not roundNum
-        or not current
-        or roundNum < current
-
-    if not unlocked then
-        return nil
-    end
-
-    return {
-        Root = portalRoot,
-        RF = rf,
-        Score = 1000,
-        Name =
-            fullName(
-                portalRoot.Parent
-            ),
-    }
-end
-
-local function tryFastExactPhasePortal()
-    if not Root then
-        return false
-    end
-
-    local mech =
-        exactPortalMechanism()
-
-    if not mech then
-        return false
-    end
-
-    local beforePos =
-        Root.Position
-
-    local oldRegion =
-        CurrentCombatRegion
-
-    local wasCleared =
-        roomClearedVisibleAdaptive()
-
-    local ok, err =
-        pcall(function()
-            mech.RF:
-                InvokeServer()
-        end)
-
-    portalLog(
-        "ADAPTIVE_FAST_RF path="
-            .. tostring(
-                mech.Name
-            )
-            .. " ok="
-            .. tostring(ok)
-            .. " err="
-            .. tostring(err)
-    )
-
-    if not ok then
-        return false
-    end
-
-    local deadline =
-        os.clock()
-        + CFG.ADAPTIVE_FAST_VERIFY
-
-    while os.clock()
-        < deadline
-    do
-        local evidence =
-            adaptiveTransitionEvidence(
-                beforePos,
-                oldRegion,
-                wasCleared
-            )
-
-        if evidence then
+            end
+        else
             important(
-                "Phase | adaptive portal"
-            )
-
-            portalLog(
-                "ADAPTIVE_FAST_SUCCESS "
-                    .. tostring(
-                        evidence
-                    )
-            )
-
-            return true,
-                evidence
-        end
-
-        task.wait(0.08)
-    end
-
-    return false
-end
-
-local function adaptiveObjectPosition(obj)
-    if not obj then
-        return nil
-    end
-
-    if obj:IsA("BasePart") then
-        return obj.Position
-    end
-
-    if obj:IsA("Attachment") then
-        return obj.WorldPosition
-    end
-
-    if obj:IsA("Model") then
-        local ok, pivot =
-            pcall(
-                obj.GetPivot,
-                obj
-            )
-
-        if ok then
-            return pivot.Position
-        end
-    end
-
-    local part =
-        obj:
-            FindFirstChildWhichIsA(
-                "BasePart",
-                true
-            )
-
-    return part
-        and part.Position
-end
-
-local function adaptiveCandidatePart(obj)
-    if not obj then
-        return nil
-    end
-
-    if obj:IsA("BasePart") then
-        return obj
-    end
-
-    if obj:IsA("Model") then
-        local root =
-            obj:
-                FindFirstChild(
-                    "Root",
-                    true
-                )
-
-        if root
-            and root:IsA(
-                "BasePart"
-            )
-        then
-            return root
-        end
-
-        return obj.PrimaryPart
-            or obj:
-                FindFirstChildWhichIsA(
-                    "BasePart",
-                    true
-                )
-    end
-
-    return obj:
-        FindFirstChildWhichIsA(
-            "BasePart",
-            true
-        )
-end
-
-local function adaptiveMechanism(obj)
-    return {
-        Prompt =
-            obj:
-                FindFirstChildWhichIsA(
-                    "ProximityPrompt",
-                    true
-                ),
-        Touch =
-            obj:
-                FindFirstChildWhichIsA(
-                    "TouchTransmitter",
-                    true
-                ),
-        RF =
-            obj:
-                FindFirstChildWhichIsA(
-                    "RemoteFunction",
-                    true
-                ),
-        RE =
-            obj:
-                FindFirstChildWhichIsA(
-                    "RemoteEvent",
-                    true
-                ),
-        LocalPortal =
-            obj:
-                FindFirstChild(
-                    "LocalRoundPortal",
-                    true
-                ),
-        ServerPortal =
-            obj:
-                FindFirstChild(
-                    "ServerRoundPortal",
-                    true
-                ),
-    }
-end
-
-local function adaptiveCandidateRows()
-    if not Root then
-        return {}
-    end
-
-    local good = {
-        portal = 180,
-        teleport = 165,
-        exit = 145,
-        transition = 140,
-        next = 120,
-        gate = 105,
-        door = 55,
-    }
-
-    local bad = {
-        torch = 190,
-        walltorch = 260,
-        spawn = 200,
-        reset = 230,
-        kill = 260,
-        damage = 180,
-        lava = 220,
-        hazard = 180,
-        decoration = 120,
-        decor = 120,
-    }
-
-    local rows = {}
-    local seen = {}
-
-    local function scoreName(text)
-        local low =
-            string.lower(
-                tostring(text or "")
-            )
-
-        local score = 0
-
-        for word, value in pairs(good) do
-            if string.find(
-                low,
-                word,
-                1,
-                true
-            )
-            then
-                score += value
-            end
-        end
-
-        for word, value in pairs(bad) do
-            if string.find(
-                low,
-                word,
-                1,
-                true
-            )
-            then
-                score -= value
-            end
-        end
-
-        return score
-    end
-
-    local function consider(obj)
-        if not obj
-            or seen[obj]
-        then
-            return
-        end
-
-        seen[obj] = true
-
-        local pos =
-            adaptiveObjectPosition(
-                obj
-            )
-
-        if not pos then
-            return
-        end
-
-        local distance =
-            (
-                pos
-                - Root.Position
-            ).Magnitude
-
-        if distance
-            > CFG.ADAPTIVE_MAX_DISTANCE
-        then
-            return
-        end
-
-        local path =
-            fullName(obj)
-
-        -- Never auto-use the old dangerous generic top-level portal.
-        if path == "Workspace.Portal"
-            or string.sub(
-                path,
-                1,
-                #"Workspace.Portal."
-            ) == "Workspace.Portal."
-        then
-            return
-        end
-
-        local mech =
-            adaptiveMechanism(obj)
-
-        local score =
-            scoreName(
-                obj.Name
-                .. " "
-                .. path
-            )
-
-        if mech.Prompt then
-            score += 65
-        end
-
-        if mech.Touch then
-            score += 55
-        end
-
-        if mech.RF then
-            score += 60
-        end
-
-        if mech.LocalPortal
-            or mech.ServerPortal
-        then
-            score += 150
-        end
-
-        if string.find(
-            path,
-            "Workspace.RoundDoor.Portal",
-            1,
-            true
-        )
-        then
-            score += 220
-        end
-
-        score +=
-            math.max(
-                0,
-                75
-                    - distance * 0.20
-            )
-
-        local part =
-            adaptiveCandidatePart(
-                obj
-            )
-
-        if part
-            and part:IsA(
-                "BasePart"
-            )
-        then
-            local maxDim =
-                math.max(
-                    part.Size.X,
-                    part.Size.Y,
-                    part.Size.Z
-                )
-
-            if maxDim > 120 then
-                score -= 220
-            end
-        end
-
-        if score >= 170
-            and (
-                mech.RF
-                or mech.Prompt
-                or mech.Touch
-            )
-        then
-            table.insert(
-                rows,
-                {
-                    Object = obj,
-                    Position = pos,
-                    Distance = distance,
-                    Score = score,
-                    Mechanism = mech,
-                    Part = part,
-                }
+                "Transition module load failed"
             )
         end
     end
-
-    for _, obj in ipairs(
-        workspace:GetDescendants()
-    ) do
-        if obj:IsA("Model")
-            or obj:IsA("Folder")
-            or obj:IsA("BasePart")
-        then
-            local low =
-                string.lower(
-                    obj.Name
-                )
-
-            local interesting =
-                false
-
-            for word in pairs(good) do
-                if string.find(
-                    low,
-                    word,
-                    1,
-                    true
-                )
-                then
-                    interesting =
-                        true
-                    break
-                end
-            end
-
-            if interesting then
-                consider(obj)
-            end
-        end
-    end
-
-    table.sort(
-        rows,
-        function(a,b)
-            if a.Score
-                ~= b.Score
-            then
-                return a.Score
-                    > b.Score
-            end
-
-            return a.Distance
-                < b.Distance
-        end
-    )
-
-    return rows
-end
-
-local function adaptivePromptPosition(
-    prompt
-)
-    if not prompt
-        or not prompt.Parent
-    then
-        return nil
-    end
-
-    local parent =
-        prompt.Parent
-
-    if parent:IsA(
-        "Attachment"
-    ) then
-        return parent.WorldPosition
-    end
-
-    if parent:IsA(
-        "BasePart"
-    ) then
-        return parent.Position
-    end
-
-    return adaptiveObjectPosition(
-        parent
-    )
-end
-
-local function tryAdaptivePhaseResolver()
-    if not Root then
-        return false
-    end
-
-    -- Exact validated W1D3 path gets first priority.
-    local fastOk,
-        fastResult =
-            tryFastExactPhasePortal()
-
-    if fastOk then
-        return true,
-            fastResult
-    end
-
-    local rows =
-        adaptiveCandidateRows()
-
-    local oldRegion =
-        CurrentCombatRegion
-
-    local wasCleared =
-        roomClearedVisibleAdaptive()
-
-    for i = 1,
-        math.min(
-            6,
-            #rows
-        )
-    do
-        local row =
-            rows[i]
-
-        local mech =
-            row.Mechanism
-
-        local beforePos =
-            Root.Position
-
-        portalLog(
-            "ADAPTIVE_TRY #"
-                .. tostring(i)
-                .. " score="
-                .. string.format(
-                    "%.1f",
-                    row.Score
-                )
-                .. " dist="
-                .. string.format(
-                    "%.1f",
-                    row.Distance
-                )
-                .. " path="
-                .. fullName(
-                    row.Object
-                )
-        )
-
-        -- High-confidence portal RF.
-        if mech.RF
-            and (
-                mech.LocalPortal
-                or mech.ServerPortal
-            )
-        then
-            pcall(function()
-                mech.RF:
-                    InvokeServer()
-            end)
-
-            local deadline =
-                os.clock() + 1.25
-
-            while os.clock()
-                < deadline
-            do
-                local evidence =
-                    adaptiveTransitionEvidence(
-                        beforePos,
-                        oldRegion,
-                        wasCleared
-                    )
-
-                if evidence then
-                    important(
-                        "Phase | adaptive portal"
-                    )
-
-                    return true,
-                        evidence
-                end
-
-                task.wait(0.08)
-            end
-        end
-
-        -- Prompt-based exits/gates.
-        if mech.Prompt
-            and mech.Prompt.Enabled
-            and type(
-                fireproximityprompt
-            ) == "function"
-        then
-            local pos =
-                adaptivePromptPosition(
-                    mech.Prompt
-                )
-
-            if pos then
-                local dir =
-                    Root.Position
-                    - pos
-
-                if dir.Magnitude < 0.1 then
-                    dir =
-                        Root.CFrame.LookVector
-                else
-                    dir =
-                        dir.Unit
-                end
-
-                placeCharacter(
-                    pos
-                        + dir * 2.2,
-                    -dir
-                )
-
-                task.wait(0.10)
-            end
-
-            pcall(
-                fireproximityprompt,
-                mech.Prompt,
-                0
-            )
-
-            local deadline =
-                os.clock() + 1.50
-
-            while os.clock()
-                < deadline
-            do
-                local evidence =
-                    adaptiveTransitionEvidence(
-                        beforePos,
-                        oldRegion,
-                        wasCleared
-                    )
-
-                if evidence then
-                    important(
-                        "Phase | adaptive gate"
-                    )
-
-                    return true,
-                        evidence
-                end
-
-                task.wait(0.08)
-            end
-        end
-
-        -- Physical portal/exit crossing.
-        local part =
-            row.Part
-
-        if part
-            and part:IsA(
-                "BasePart"
-            )
-            and (
-                mech.Touch
-                or string.find(
-                    string.lower(
-                        fullName(
-                            row.Object
-                        )
-                    ),
-                    "portal",
-                    1,
-                    true
-                )
-                or string.find(
-                    string.lower(
-                        fullName(
-                            row.Object
-                        )
-                    ),
-                    "exit",
-                    1,
-                    true
-                )
-            )
-        then
-            local maxDim =
-                math.max(
-                    part.Size.X,
-                    part.Size.Y,
-                    part.Size.Z
-                )
-
-            if maxDim <= 120 then
-                local center =
-                    part.Position
-
-                local axis =
-                    part.Size.X
-                        < part.Size.Z
-                    and part.CFrame.RightVector
-                    or part.CFrame.LookVector
-
-                axis =
-                    Vector3.new(
-                        axis.X,
-                        0,
-                        axis.Z
-                    )
-
-                if axis.Magnitude < 0.1 then
-                    axis =
-                        Root.CFrame.LookVector
-                else
-                    axis =
-                        axis.Unit
-                end
-
-                for _, offset in ipairs({
-                    -4,
-                    -1,
-                    0,
-                    1,
-                    4,
-                }) do
-                    local p =
-                        center
-                        + axis * offset
-
-                    placeCharacter(
-                        Vector3.new(
-                            p.X,
-                            center.Y,
-                            p.Z
-                        ),
-                        axis
-                    )
-
-                    if mech.Touch
-                        and type(
-                            firetouchinterest
-                        ) == "function"
-                    then
-                        pcall(
-                            firetouchinterest,
-                            Root,
-                            part,
-                            0
-                        )
-
-                        task.wait(0.035)
-
-                        pcall(
-                            firetouchinterest,
-                            Root,
-                            part,
-                            1
-                        )
-                    end
-
-                    task.wait(0.12)
-
-                    local evidence =
-                        adaptiveTransitionEvidence(
-                            beforePos,
-                            oldRegion,
-                            wasCleared
-                        )
-
-                    if evidence then
-                        important(
-                            "Phase | adaptive touch"
-                        )
-
-                        return true,
-                            evidence
-                    end
-                end
-            end
-        end
-    end
-
-    return false,
-        "NO_ADAPTIVE_TRANSITION"
 end
 
 
@@ -4877,11 +4057,10 @@ local noLocalEnemySince =
 local gateRetryAt =
     0
 
-local gateEnteredAt =
-    nil
-
-local lastAdaptiveAttemptAt =
-    0
+getgenv().IronSoulAdaptiveGateState = {
+    EnteredAt = nil,
+    LastAttemptAt = 0,
+}
 
 lockRegion(
     "START"
@@ -4959,12 +4138,12 @@ while not stopReason do
     CurrentState = state
 
     if state == "GATE" then
-        if not gateEnteredAt then
-            gateEnteredAt =
+        if not getgenv().IronSoulAdaptiveGateState.EnteredAt then
+            getgenv().IronSoulAdaptiveGateState.EnteredAt =
                 os.clock()
         end
     else
-        gateEnteredAt =
+        getgenv().IronSoulAdaptiveGateState.EnteredAt =
             nil
     end
 
@@ -5184,17 +4363,22 @@ while not stopReason do
                 -- The visible "Room Cleared" signal means the stage may use
                 -- a section portal rather than another physical branch door.
                 -- First try the exact W1D3-validated RoundDoor.Portal RF.
-                if roomClearedVisibleAdaptive()
+                if (getgenv().IronSoulTransitionResolver and getgenv().IronSoulTransitionResolver:RoomClearedVisible())
                     and os.clock()
-                        - lastAdaptiveAttemptAt
+                        - getgenv().IronSoulAdaptiveGateState.LastAttemptAt
                         >= CFG.ADAPTIVE_RETRY_COOLDOWN
                 then
-                    lastAdaptiveAttemptAt =
+                    getgenv().IronSoulAdaptiveGateState.LastAttemptAt =
                         os.clock()
+
+                    local resolver =
+                        getgenv().IronSoulTransitionResolver
 
                     local ok,
                         result =
-                            tryFastExactPhasePortal()
+                            resolver
+                            and resolver:
+                                TryFastExactPortal()
 
                     if ok then
                         adaptiveDone =
@@ -5234,7 +4418,7 @@ while not stopReason do
                             noLocalEnemySince =
                                 nil
 
-                            gateEnteredAt =
+                            getgenv().IronSoulAdaptiveGateState.EnteredAt =
                                 nil
 
                             task.wait(0.45)
@@ -5290,7 +4474,7 @@ while not stopReason do
                                 noLocalEnemySince =
                                     nil
 
-                                gateEnteredAt =
+                                getgenv().IronSoulAdaptiveGateState.EnteredAt =
                                     nil
 
                                 task.wait(0.45)
@@ -5313,20 +4497,25 @@ while not stopReason do
                 -- run the generalized high-confidence resolver.
                 if not adaptiveDone
                     and state == "GATE"
-                    and gateEnteredAt
+                    and getgenv().IronSoulAdaptiveGateState.EnteredAt
                     and os.clock()
-                        - gateEnteredAt
+                        - getgenv().IronSoulAdaptiveGateState.EnteredAt
                         >= CFG.ADAPTIVE_STUCK_TIME
                     and os.clock()
-                        - lastAdaptiveAttemptAt
+                        - getgenv().IronSoulAdaptiveGateState.LastAttemptAt
                         >= CFG.ADAPTIVE_RETRY_COOLDOWN
                 then
-                    lastAdaptiveAttemptAt =
+                    getgenv().IronSoulAdaptiveGateState.LastAttemptAt =
                         os.clock()
+
+                    local resolver =
+                        getgenv().IronSoulTransitionResolver
 
                     local ok,
                         result =
-                            tryAdaptivePhaseResolver()
+                            resolver
+                            and resolver:
+                                TryAdaptive()
 
                     if ok then
                         portalsInvoked += 1
@@ -5363,7 +4552,7 @@ while not stopReason do
                             noLocalEnemySince =
                                 nil
 
-                            gateEnteredAt =
+                            getgenv().IronSoulAdaptiveGateState.EnteredAt =
                                 nil
 
                             task.wait(0.45)
