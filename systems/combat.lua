@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - STAGING-AWARE ADAPTIVE COMBAT V60.4
+-- IRON SOUL - ENEMY-FIRST STRICT-TRANSITION COMBAT V60.5
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -132,6 +132,10 @@ local CFG = {
     STAGING_REGION_DISTANCE = 32,
     STAGING_IDLE_TIME = 2.8,
     STAGING_RETRY_COOLDOWN = 2.5,
+
+    -- If the room-volume lock is stale after a section teleport, nearby
+    -- real enemies must win over any portal/gate logic.
+    SPATIAL_ENEMY_RADIUS = 240,
 
     -- Only the exact RoundDoor.Portal can be used, never Workspace.Portal.
     SECTION_PORTAL_NEAR_DISTANCE = 85,
@@ -1163,6 +1167,80 @@ local function nearestEnemy()
 
     return best,
         bestDist
+end
+
+local function nearestSpatialEnemy(
+    radius
+)
+    if not Root then
+        return nil,
+            math.huge
+    end
+
+    radius =
+        tonumber(radius)
+        or CFG.SPATIAL_ENEMY_RADIUS
+
+    local best = nil
+    local bestDist =
+        math.huge
+
+    for _, enemy in ipairs(
+        liveEnemies()
+    ) do
+        local eroot =
+            modelRoot(enemy)
+
+        if eroot then
+            local dist =
+                (
+                    eroot.Position
+                    - Root.Position
+                ).Magnitude
+
+            if dist < bestDist
+                and dist <= radius
+            then
+                best = enemy
+                bestDist = dist
+            end
+        end
+    end
+
+    return best,
+        bestDist
+end
+
+local function spatialLiveEnemyCount(
+    radius
+)
+    if not Root then
+        return 0
+    end
+
+    radius =
+        tonumber(radius)
+        or CFG.SPATIAL_ENEMY_RADIUS
+
+    local n = 0
+
+    for _, enemy in ipairs(
+        liveEnemies()
+    ) do
+        local eroot =
+            modelRoot(enemy)
+
+        if eroot
+            and (
+                eroot.Position
+                - Root.Position
+            ).Magnitude <= radius
+        then
+            n += 1
+        end
+    end
+
+    return n
 end
 
 local function enemyHealth(enemy)
@@ -4113,6 +4191,59 @@ getgenv().IronSoulStagingState = {
     LastStatusAt = 0,
 }
 
+getgenv().IronSoulNavTraceRows =
+    getgenv().IronSoulNavTraceRows
+    or {}
+
+getgenv().IronSoulNavTrace =
+    function(text)
+        local rows =
+            getgenv().IronSoulNavTraceRows
+
+        table.insert(
+            rows,
+            string.format(
+                "[%.2f] %s",
+                os.clock(),
+                tostring(text)
+            )
+        )
+
+        while #rows > 24 do
+            table.remove(
+                rows,
+                1
+            )
+        end
+
+        if type(writefile)
+            == "function"
+        then
+            pcall(
+                writefile,
+                "IronSoul_LastNavTrace_V60_5.txt",
+                table.concat(
+                    rows,
+                    "\n"
+                )
+            )
+        end
+    end
+
+getgenv().IronSoulNavTrace(
+    "START PlaceId="
+        .. tostring(game.PlaceId)
+        .. " Pos="
+        .. tostring(
+            Root
+            and Root.Position
+        )
+        .. " GameRound="
+        .. tostring(
+            gameRound()
+        )
+)
+
 lockRegion(
     "START"
 )
@@ -4288,6 +4419,45 @@ while not stopReason do
             local enemy =
                 nearestEnemy()
 
+            if not enemy then
+                local spatialEnemy,
+                    spatialDist =
+                        nearestSpatialEnemy(
+                            CFG.SPATIAL_ENEMY_RADIUS
+                        )
+
+                if spatialEnemy then
+                    enemy =
+                        spatialEnemy
+
+                    -- Re-lock toward this area's nearest combat volume, but
+                    -- do not require that volume to be correct before fighting.
+                    lockRegion(
+                        "SPATIAL_ENEMY_RECOVERY"
+                    )
+
+                    getgenv().IronSoulNavTrace(
+                        "SPATIAL_ENEMY name="
+                            .. tostring(
+                                spatialEnemy.Name
+                            )
+                            .. " dist="
+                            .. string.format(
+                                "%.1f",
+                                spatialDist
+                            )
+                            .. " Pos="
+                            .. tostring(
+                                Root.Position
+                            )
+                            .. " GameRound="
+                            .. tostring(
+                                gameRound()
+                            )
+                    )
+                end
+            end
+
             if enemy then
                 noLocalEnemySince =
                     nil
@@ -4344,7 +4514,13 @@ while not stopReason do
                 -- V60.3 treated that as ordinary COMBAT and waited forever.
                 -- Here we allow the separate transition module to search for
                 -- the NEXT local gate/portal without changing completedRound.
+                local nearbyEnemyCount =
+                    spatialLiveEnemyCount(
+                        CFG.SPATIAL_ENEMY_RADIUS
+                    )
+
                 if localCount == 0
+                    and nearbyEnemyCount == 0
                     and not currentDragonEgg()
                 then
                     local stagingRegion,
@@ -4381,14 +4557,48 @@ while not stopReason do
                                 "Staging | searching next phase"
                             )
 
+                            getgenv().IronSoulNavTrace(
+                                "STAGING_SEARCH Pos="
+                                    .. tostring(
+                                        Root.Position
+                                    )
+                                    .. " GameRound="
+                                    .. tostring(
+                                        gameRound()
+                                    )
+                                    .. " local="
+                                    .. tostring(
+                                        localCount
+                                    )
+                                    .. " nearby="
+                                    .. tostring(
+                                        nearbyEnemyCount
+                                    )
+                                    .. " global="
+                                    .. tostring(
+                                        #liveEnemies()
+                                    )
+                                    .. " regionDist="
+                                    .. tostring(
+                                        stagingDist
+                                    )
+                            )
+
                             local resolver =
                                 getgenv().IronSoulTransitionResolver
 
-                            local moved,
-                                moveResult =
-                                    resolver
-                                    and resolver:
-                                        TryAdaptive()
+                            local moved =
+                                false
+
+                            local moveResult =
+                                nil
+
+                            if resolver then
+                                moved,
+                                    moveResult =
+                                        resolver:
+                                            TryAdaptive()
+                            end
 
                             if moved then
                                 portalsInvoked += 1
@@ -4401,6 +4611,21 @@ while not stopReason do
 
                                 important(
                                     "Phase | staging transition"
+                                )
+
+                                getgenv().IronSoulNavTrace(
+                                    "STAGING_MOVED result="
+                                        .. tostring(
+                                            moveResult
+                                        )
+                                        .. " Pos="
+                                        .. tostring(
+                                            Root.Position
+                                        )
+                                        .. " GameRound="
+                                        .. tostring(
+                                            gameRound()
+                                        )
                                 )
 
                                 lockRegion(
@@ -4462,6 +4687,10 @@ while not stopReason do
                                         .. tostring(
                                             localCount
                                         )
+                                        .. "\nNearbyEnemies="
+                                        .. tostring(
+                                            nearbyEnemyCount
+                                        )
                                         .. "\nGlobalEnemies="
                                         .. tostring(
                                             #liveEnemies()
@@ -4499,6 +4728,23 @@ while not stopReason do
                     elseif eggResult
                         == "DONE"
                     then
+                        getgenv().IronSoulNavTrace(
+                            "EGG_DONE Pos="
+                                .. tostring(
+                                    Root.Position
+                                )
+                                .. " GameRound="
+                                .. tostring(
+                                    gameRound()
+                                )
+                                .. " nearbyEnemies="
+                                .. tostring(
+                                    spatialLiveEnemyCount(
+                                        CFG.SPATIAL_ENEMY_RADIUS
+                                    )
+                                )
+                        )
+
                         finishPendingGateAfterEgg()
 
                         noLocalEnemySince =
