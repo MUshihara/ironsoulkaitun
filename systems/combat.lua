@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - OPEN-GATE ENEMY-FRONTIER COMBAT V60.9
+-- IRON SOUL - OPEN-GATE ENEMY-FRONTIER COMBAT V60.9.1
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -1310,6 +1310,17 @@ getgenv().IronSoulExpectedGateStatus =
                 nil
         end
 
+        local folder =
+            workspace:
+                FindFirstChild(
+                    "RoundDoor"
+                )
+
+        if not folder then
+            return nil,
+                nil
+        end
+
         local nearestOpen =
             nil
 
@@ -1322,61 +1333,86 @@ getgenv().IronSoulExpectedGateStatus =
         local closedDist =
             math.huge
 
-        for _, row in ipairs(
-            physicalDoorRows()
+        -- Self-contained scan on purpose.
+        -- Do NOT call physicalDoorRows() here: that local function is
+        -- declared later in combat.lua and caused V60.9's runtime nil call.
+        for _, root in ipairs(
+            folder:GetDescendants()
         ) do
-            if row.RoundNum
-                == expectedRound
-                and row.PromptPos
+            if root:IsA("BasePart")
+                and root.Name == "Root"
+                and root.Parent
+                and root.Parent.Name
+                    == "Door"
+                and tonumber(
+                    root:GetAttribute(
+                        "RoundNum"
+                    )
+                ) == expectedRound
             then
+                local prompt =
+                    root:
+                        FindFirstChildWhichIsA(
+                            "ProximityPrompt",
+                            true
+                        )
+
                 local dist =
                     (
-                        row.PromptPos
+                        root.Position
                         - Root.Position
                     ).Magnitude
 
+                local switch =
+                    root:GetAttribute(
+                        "Switch"
+                    )
+
                 local opened =
-                    row.Switch == 1
+                    switch == 1
                     or (
-                        row.Prompt
-                        and row.Prompt.Enabled
+                        prompt
+                        and prompt.Enabled
                             == false
                     )
 
-                if opened
-                    and dist < openDist
-                then
-                    nearestOpen =
-                        row
+                local row = {
+                    Root = root,
+                    Door = root.Parent,
+                    RoundNum =
+                        expectedRound,
+                    Prompt = prompt,
+                    PromptPos =
+                        root.Position,
+                    Switch = switch,
+                    PlayerDistance =
+                        dist,
+                }
 
-                    openDist =
-                        dist
+                if opened then
+                    if dist < openDist then
+                        nearestOpen =
+                            row
 
-                elseif not opened
-                    and dist < closedDist
-                then
-                    nearestClosed =
-                        row
+                        openDist =
+                            dist
+                    end
+                else
+                    if dist < closedDist then
+                        nearestClosed =
+                            row
 
-                    closedDist =
-                        dist
+                        closedDist =
+                            dist
+                    end
                 end
             end
-        end
-
-        if nearestOpen then
-            nearestOpen.PlayerDistance =
-                openDist
-        end
-
-        if nearestClosed then
-            nearestClosed.PlayerDistance =
-                closedDist
         end
 
         return nearestOpen,
             nearestClosed
     end
+
 
 local function spatialLiveEnemyCount(
     radius
@@ -4829,6 +4865,14 @@ end
 lockRegion(
     "START"
 )
+
+if getgenv().IronSoulTelemetry then
+    getgenv().IronSoulTelemetry:
+        Event(
+            "V60_9_1_READY",
+            "expected-gate scanner self-contained"
+        )
+end
 
 local function moveToGateOrHoldEgg(
     roundToGate,
