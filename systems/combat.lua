@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - QUIET EGG-ATTACK CONTINUOUS COMBAT V59.3
+-- IRON SOUL - STRICT EGG + SAME-PLACE REPLAY COMBAT V59.4
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -143,7 +143,7 @@ task.wait(2)
 --========================================================--
 
 local ROOT_FOLDER =
-    "IronSoul_QuietCombat_V59_3"
+    "IronSoul_StrictEggSamePlaceReplay_V59_4"
 
 local SESSION =
     os.date("%Y%m%d_%H%M%S")
@@ -2909,11 +2909,39 @@ local function openAndCrossSelectedDoor(
         "DOOR_CROSSED_NO_PORTAL"
 end
 
-local EggHandled =
-    setmetatable(
-        {},
-        {__mode = "k"}
-    )
+local EGG_PROMPT_SEARCH_RADIUS =
+    45
+
+local EGG_ATTACK_HEIGHT =
+    1.25
+
+local EGG_ATTACK_OFFSET =
+    2.0
+
+local EGG_NO_PROGRESS_RECOVERY =
+    2.25
+
+local EGG_SESSION_TIMEOUT =
+    18
+
+local function dragonEggBroken(egg)
+    return not egg
+        or not egg.Parent
+        or egg:GetAttribute(
+            "Broken"
+        ) == true
+end
+
+local function dragonEggActive(egg)
+    return egg
+        and egg.Parent
+        and egg:GetAttribute(
+            "Active"
+        ) == true
+        and not dragonEggBroken(
+            egg
+        )
+end
 
 local function eggCenter(egg)
     if not egg then
@@ -2924,25 +2952,25 @@ local function eggCenter(egg)
         return egg.Position
     end
 
-    if egg:IsA("Model") then
-        local part =
+    local part =
+        egg:IsA("Model")
+        and (
             egg.PrimaryPart
             or egg:
                 FindFirstChild(
                     "HumanoidRootPart"
                 )
             or egg:
+                FindFirstChild(
+                    "Root"
+                )
+            or egg:
                 FindFirstChildWhichIsA(
                     "BasePart",
                     true
                 )
-
-        return part
-            and part.Position
-    end
-
-    local part =
-        egg:
+        )
+        or egg:
             FindFirstChildWhichIsA(
                 "BasePart",
                 true
@@ -2952,144 +2980,516 @@ local function eggCenter(egg)
         and part.Position
 end
 
-local function findNearbyEggPrompt()
-    if not Root then
-        return nil
-    end
-
+local function currentDragonEgg()
     local egg =
         workspace:
             FindFirstChild(
                 "DragonEgg"
             )
 
-    if not egg then
+    if dragonEggBroken(egg) then
         return nil
     end
 
-    local prompt =
-        egg:
-            FindFirstChildWhichIsA(
-                "ProximityPrompt",
-                true
-            )
+    local center =
+        eggCenter(egg)
 
+    if not center then
+        return nil
+    end
+
+    -- Do not steal an egg belonging to another streamed branch.
+    if CurrentCombatRegion
+        and not pointInExpandedPart(
+            CurrentCombatRegion,
+            center,
+            65
+        )
+    then
+        return nil
+    end
+
+    return egg
+end
+
+local function eggPromptPart(prompt)
     if not prompt then
         return nil
     end
 
-    local pos =
-        promptWorldPosition(
-            prompt
-        )
+    local current =
+        prompt.Parent
 
-    if not pos then
-        return nil
+    while current
+        and current ~= workspace
+    do
+        if current:IsA("BasePart") then
+            return current
+        end
+
+        if current:IsA("Attachment")
+            and current.Parent
+            and current.Parent:IsA(
+                "BasePart"
+            )
+        then
+            return current.Parent
+        end
+
+        current = current.Parent
     end
-
-    if CurrentCombatRegion
-        and not pointInExpandedPart(
-            CurrentCombatRegion,
-            pos,
-            55
-        )
-    then
-        return nil
-    end
-
-    local dist =
-        (
-            pos
-            - Root.Position
-        ).Magnitude
-
-    if dist > 120 then
-        return nil
-    end
-
-    return prompt,
-        pos,
-        dist,
-        egg
 end
 
-local function interactNearbyEgg()
-    local prompt,
-        promptPos,
-        dist,
-        egg =
-            findNearbyEggPrompt()
+local function findEggPrompts(egg)
+    local result = {}
+    local seen = {}
 
-    if not prompt
+    -- Preferred: prompt under DragonEgg.
+    for _, obj in ipairs(
+        egg:GetDescendants()
+    ) do
+        if obj:IsA(
+            "ProximityPrompt"
+        )
+        then
+            table.insert(
+                result,
+                obj
+            )
+
+            seen[obj] = true
+        end
+    end
+
+    -- Some maps host the prompt in a nearby interaction model instead.
+    local center =
+        eggCenter(egg)
+
+    if center then
+        local nearby = {}
+
+        for _, obj in ipairs(
+            workspace:GetDescendants()
+        ) do
+            if obj:IsA(
+                "ProximityPrompt"
+            )
+                and not seen[obj]
+            then
+                local part =
+                    eggPromptPart(obj)
+
+                if part then
+                    local distance =
+                        (
+                            part.Position
+                            - center
+                        ).Magnitude
+
+                    if distance
+                        <= EGG_PROMPT_SEARCH_RADIUS
+                    then
+                        table.insert(
+                            nearby,
+                            {
+                                Prompt = obj,
+                                Distance = distance,
+                            }
+                        )
+                    end
+                end
+            end
+        end
+
+        table.sort(
+            nearby,
+            function(a,b)
+                return a.Distance
+                    < b.Distance
+            end
+        )
+
+        for _, row in ipairs(
+            nearby
+        ) do
+            table.insert(
+                result,
+                row.Prompt
+            )
+        end
+    end
+
+    return result
+end
+
+local function positionAtEgg(
+    egg,
+    closeMode,
+    side
+)
+    if not Root
         or not egg
+        or not egg.Parent
     then
         return false
     end
 
-    local beforeRound =
-        gameRound()
-
     local center =
         eggCenter(egg)
-        or promptPos
 
-    -- IMPORTANT:
-    -- Previous V59.x went straight to the prompt.
-    -- V59.3 performs a real headless Sword combo into the DragonEgg first.
-    if not EggHandled[egg] then
-        EggHandled[egg] = true
+    if not center then
+        return false
+    end
 
-        important(
-            "Dragon Egg | attacking first"
+    side = side or 1
+
+    local horizontal =
+        Vector3.new(
+            Root.Position.X
+                - center.X,
+            0,
+            Root.Position.Z
+                - center.Z
         )
 
-        local horizontal =
-            Vector3.new(
-                Root.Position.X
-                    - center.X,
-                0,
-                Root.Position.Z
-                    - center.Z
-            )
+    local dir =
+        horizontal.Magnitude > 0.1
+        and horizontal.Unit
+        or Vector3.new(
+            0,
+            0,
+            1
+        )
 
-        local dir =
-            horizontal.Magnitude > 0.1
-            and horizontal.Unit
-            or Vector3.new(
-                0,
-                0,
-                1
-            )
+    if side < 0 then
+        dir = -dir
+    end
 
-        local attackPos =
+    local offset =
+        closeMode
+        and 1.25
+        or EGG_ATTACK_OFFSET
+
+    local height =
+        closeMode
+        and 0.55
+        or EGG_ATTACK_HEIGHT
+
+    local goal =
+        center
+        + dir * offset
+        + Vector3.new(
+            0,
+            height,
+            0
+        )
+
+    Root.CFrame =
+        CFrame.lookAt(
+            goal,
             center
-            + dir
-                * CFG.ELEVATED_HORIZONTAL_OFFSET
-            + Vector3.new(
-                0,
-                CFG.ELEVATED_RECOVERY_HEIGHT,
+        )
+
+    pcall(function()
+        Root.AssemblyLinearVelocity =
+            Vector3.zero
+
+        Root.AssemblyAngularVelocity =
+            Vector3.zero
+    end)
+
+    return true
+end
+
+local function waitEggActive(
+    egg,
+    timeout
+)
+    return waitUntil(
+        function()
+            if dragonEggBroken(
+                egg
+            )
+            then
+                return "BROKEN"
+            end
+
+            if dragonEggActive(
+                egg
+            )
+            then
+                return "ACTIVE"
+            end
+        end,
+        timeout,
+        0.04
+    )
+end
+
+local function activateDragonEggStrict(
+    egg
+)
+    if dragonEggBroken(egg) then
+        return true
+    end
+
+    if dragonEggActive(egg) then
+        return true
+    end
+
+    important(
+        "Egg | activating"
+    )
+
+    local prompts =
+        findEggPrompts(egg)
+
+    if #prompts == 0 then
+        important(
+            "Egg | prompt not found, retrying"
+        )
+
+        return false
+    end
+
+    for _, prompt in ipairs(prompts) do
+        if dragonEggBroken(egg)
+            or dragonEggActive(egg)
+        then
+            break
+        end
+
+        local part =
+            eggPromptPart(prompt)
+
+        if part
+            and Root
+        then
+            local delta =
+                part.Position
+                - Root.Position
+
+            local dir =
+                delta.Magnitude > 0.1
+                and delta.Unit
+                or Root.CFrame.LookVector
+
+            local approach =
+                part.Position
+                - dir * 2.2
+
+            placeCharacter(
+                Vector3.new(
+                    approach.X,
+                    part.Position.Y,
+                    approach.Z
+                ),
+                dir
+            )
+        end
+
+        task.wait(0.06)
+
+        -- Executor-native prompt route.
+        if type(fireproximityprompt)
+            == "function"
+        then
+            pcall(
+                fireproximityprompt,
+                prompt
+            )
+
+            local result =
+                waitEggActive(
+                    egg,
+                    0.85
+                )
+
+            if result then
+                break
+            end
+
+            pcall(
+                fireproximityprompt,
+                prompt,
                 0
             )
 
-        Root.CFrame =
-            CFrame.lookAt(
-                attackPos,
-                center
-            )
+            result =
+                waitEggActive(
+                    egg,
+                    0.85
+                )
+
+            if result then
+                break
+            end
+        end
+
+        -- Roblox prompt lifecycle fallback.
+        local oldDuration =
+            prompt.HoldDuration
 
         pcall(function()
-            Root.AssemblyLinearVelocity =
-                Vector3.zero
+            prompt.HoldDuration = 0
 
-            Root.AssemblyAngularVelocity =
-                Vector3.zero
+            prompt:
+                InputHoldBegin()
+
+            task.wait(0.06)
+
+            prompt:
+                InputHoldEnd()
+
+            prompt.HoldDuration =
+                oldDuration
         end)
 
-        -- Two clean 4-step headless combos.
-        -- No Mouse1, no visible synthetic click.
-        for combo = 1, 2 do
+        if waitEggActive(
+            egg,
+            1.0
+        ) then
+            break
+        end
+    end
+
+    if dragonEggBroken(egg) then
+        important(
+            "Egg | already gone"
+        )
+
+        return true
+    end
+
+    if dragonEggActive(egg) then
+        important(
+            "Egg | active, attacking"
+        )
+
+        return true
+    end
+
+    important(
+        "Egg | activation not confirmed, retrying"
+    )
+
+    return false
+end
+
+local function eggHitDamage(egg)
+    local value =
+        egg
+        and egg:
+            GetAttribute(
+                "HitDamage"
+            )
+
+    return tonumber(value)
+end
+
+local function attackDragonEggStrict(
+    egg
+)
+    if dragonEggBroken(egg) then
+        return "DONE"
+    end
+
+    -- IMPORTANT:
+    -- Earlier recon proved the egg cannot receive damage until Active=true.
+    if not dragonEggActive(egg) then
+        if not activateDragonEggStrict(
+            egg
+        )
+        then
+            return "RETRY"
+        end
+    end
+
+    if dragonEggBroken(egg) then
+        return "DONE"
+    end
+
+    local started =
+        os.clock()
+
+    local lastProgress =
+        os.clock()
+
+    local lastHitDamage =
+        eggHitDamage(egg)
+
+    local recoverySide = 1
+
+    positionAtEgg(
+        egg,
+        false,
+        recoverySide
+    )
+
+    while not settlementDetected()
+        and not dragonEggBroken(
+            egg
+        )
+        and os.clock()
+            - started
+            < EGG_SESSION_TIMEOUT
+    do
+        -- If activation drops for any reason, restore it instead of
+        -- letting the state machine skip the objective.
+        if not dragonEggActive(
+            egg
+        )
+        then
+            activateDragonEggStrict(
+                egg
+            )
+
+            task.wait(0.10)
+        end
+
+        positionAtEgg(
+            egg,
+            false,
+            recoverySide
+        )
+
+        -- Native skills if ready, then direct no-Mouse1 Sword combo.
+        castSkill("Skill2")
+        castSkill("Skill1")
+
+        pcall(
+            sendHeadlessAttack
+        )
+
+        local hit =
+            eggHitDamage(egg)
+
+        if hit ~= lastHitDamage then
+            lastHitDamage = hit
+            lastProgress =
+                os.clock()
+        end
+
+        if os.clock()
+            - lastProgress
+            >= EGG_NO_PROGRESS_RECOVERY
+        then
+            recoverySide =
+                -recoverySide
+
+            positionAtEgg(
+                egg,
+                true,
+                recoverySide
+            )
+
+            AttackDriver.ComboStep = 1
+
             for step = 1, 4 do
-                if not egg.Parent then
+                if dragonEggBroken(
+                    egg
+                )
+                then
                     break
                 end
 
@@ -3100,118 +3500,68 @@ local function interactNearbyEgg()
                     sendHeadlessAttack
                 )
 
-                task.wait(0.065)
+                task.wait(0.06)
             end
 
-            if not egg.Parent then
-                break
-            end
-        end
+            AttackDriver.ComboStep = 1
 
-        AttackDriver.ComboStep = 1
+            local after =
+                eggHitDamage(egg)
 
-        -- If attacks themselves advanced the objective, do not prompt.
-        if not egg.Parent
-            or (
-                beforeRound
-                and gameRound()
-                and gameRound()
-                    > beforeRound
-            )
-        then
-            important(
-                "Dragon Egg | cleared by attack"
-            )
-
-            return true
-        end
-
-        task.wait(0.08)
-    end
-
-    -- Then activate the egg normally so maps where the prompt is
-    -- authoritative still progress.
-    if not prompt.Parent then
-        return true
-    end
-
-    local delta =
-        promptPos
-        - Root.Position
-
-    local dir =
-        delta.Magnitude > 0.1
-        and delta.Unit
-        or Root.CFrame.LookVector
-
-    local approach =
-        promptPos
-        - dir * 2.5
-
-    placeCharacter(
-        Vector3.new(
-            approach.X,
-            promptPos.Y,
-            approach.Z
-        ),
-        dir
-    )
-
-    task.wait(0.12)
-
-    if type(fireproximityprompt)
-        ~= "function"
-    then
-        important(
-            "Dragon Egg | prompt API unavailable"
-        )
-
-        return false
-    end
-
-    local ok =
-        pcall(
-            fireproximityprompt,
-            prompt,
-            0
-        )
-
-    if not ok then
-        important(
-            "Dragon Egg | activation failed"
-        )
-
-        return false
-    end
-
-    local progressed =
-        waitUntil(
-            function()
-                if not egg.Parent then
-                    return true
-                end
-
-                local now =
-                    gameRound()
-
-                if beforeRound
-                    and now
-                    and now > beforeRound
+            if after ~= lastHitDamage then
+                lastHitDamage = after
+                lastProgress =
+                    os.clock()
+            else
+                -- If the egg did not register damage, re-assert activation.
+                if not dragonEggActive(
+                    egg
+                )
                 then
-                    return true
+                    activateDragonEggStrict(
+                        egg
+                    )
                 end
-            end,
-            2.5,
-            0.06
+            end
+
+            lastProgress =
+                os.clock()
+        end
+
+        task.wait(0.105)
+    end
+
+    if dragonEggBroken(egg) then
+        important(
+            "Egg | broken"
         )
 
+        return "DONE"
+    end
+
+    if settlementDetected() then
+        return "SETTLEMENT"
+    end
+
+    -- NEVER tell the gate system the egg is done unless Broken/disappeared.
     important(
-        progressed
-        and "Dragon Egg | attacked + activated"
-        or "Dragon Egg | attacked + activated, waiting for round"
+        "Egg | still alive, continuing"
     )
 
-    return true
+    return "RETRY"
+end
+
+local function handleDragonEggStrict()
+    local egg =
+        currentDragonEgg()
+
+    if not egg then
+        return "NONE"
+    end
+
+    return attackDragonEggStrict(
+        egg
+    )
 end
 
 --========================================================--
@@ -3478,6 +3828,14 @@ end
 
 --========================================================--
 -- REGION-LOCKED ONE-DUNGEON STATE MACHINE
+--
+-- V59.4 adds a HARD DragonEgg invariant:
+--
+--   DragonEgg exists and Broken ~= true
+--       => GATE IS NOT ALLOWED
+--
+-- Even if GameRound advances after activating the egg, the controller
+-- remains in COMBAT until the egg is Broken or disappears.
 --========================================================--
 
 local stopReason = nil
@@ -3493,6 +3851,9 @@ local lastRound =
 local completedRound =
     nil
 
+local pendingGateRound =
+    nil
+
 local noLocalEnemySince =
     nil
 
@@ -3503,17 +3864,73 @@ lockRegion(
     "START"
 )
 
-log(
-    "Starting REGION-LOCKED controller. GameRound="
-        .. tostring(lastRound)
-        .. " Region="
-        .. tostring(
-            CurrentCombatRegion
-            and fullName(
-                CurrentCombatRegion
-            )
-        )
+local function moveToGateOrHoldEgg(
+    roundToGate,
+    reason
 )
+    local egg =
+        currentDragonEgg()
+
+    if egg then
+        pendingGateRound =
+            roundToGate
+
+        state =
+            "COMBAT"
+
+        noLocalEnemySince =
+            nil
+
+        combatLog(
+            "ROUND_ADVANCED but DragonEgg blocks gate reason="
+                .. tostring(reason)
+                .. " pendingRound="
+                .. tostring(
+                    pendingGateRound
+                )
+        )
+
+        return false
+    end
+
+    completedRound =
+        roundToGate
+
+    pendingGateRound =
+        nil
+
+    state =
+        "GATE"
+
+    noLocalEnemySince =
+        nil
+
+    return true
+end
+
+local function finishPendingGateAfterEgg()
+    if currentDragonEgg() then
+        return false
+    end
+
+    if pendingGateRound then
+        completedRound =
+            pendingGateRound
+
+        pendingGateRound =
+            nil
+
+        state =
+            "GATE"
+
+        noLocalEnemySince =
+            nil
+
+        return true
+    end
+
+    return false
+end
 
 while not stopReason do
     CurrentState = state
@@ -3540,42 +3957,23 @@ while not stopReason do
     local nowRound =
         gameRound()
 
-    -- AUTHORITATIVE transition:
-    -- If GameRound advances, current room is done.
+    -- AUTHORITATIVE room completion, BUT DragonEgg is a hard blocker.
     if nowRound
         and lastRound
         and nowRound > lastRound
         and state ~= "GATE"
     then
-        completedRound =
+        local roundToGate =
             nowRound - 1
-
-        portalLog(
-            "ROUND_CLEAR authoritative "
-                .. tostring(lastRound)
-                .. " -> "
-                .. tostring(nowRound)
-                .. " completedRound="
-                .. tostring(
-                    completedRound
-                )
-                .. " region="
-                .. tostring(
-                    CurrentCombatRegion
-                    and fullName(
-                        CurrentCombatRegion
-                    )
-                )
-        )
 
         lastRound =
             nowRound
 
-        state =
-            "GATE"
+        moveToGateOrHoldEgg(
+            roundToGate,
+            "TOP_LEVEL_ROUND_ADVANCE"
+        )
 
-        noLocalEnemySince =
-            nil
     elseif nowRound
         and (
             not lastRound
@@ -3589,162 +3987,228 @@ while not stopReason do
     if state == "COMBAT" then
         ensureRegion()
 
-        local enemy =
-            nearestEnemy()
+        local egg =
+            currentDragonEgg()
 
-        if enemy then
-            noLocalEnemySince =
-                nil
+        -- Once active, DragonEgg outranks every other target.
+        -- If a round already advanced, even an inactive egg outranks everything.
+        if egg
+            and (
+                dragonEggActive(
+                    egg
+                )
+                or pendingGateRound
+                    ~= nil
+            )
+        then
+            local eggResult =
+                attackDragonEggStrict(
+                    egg
+                )
 
-            local result =
-                fightEnemy(enemy)
-
-            if result == "SETTLEMENT" then
+            if eggResult
+                == "SETTLEMENT"
+            then
                 stopReason =
                     "SETTLEMENT_REACHED"
 
-            elseif result == "OUT_OF_LIVES" then
-                stopReason =
-                    "OUT_OF_LIVES"
+            elseif eggResult
+                == "DONE"
+            then
+                finishPendingGateAfterEgg()
 
-            elseif result == "TARGET_TIMEOUT" then
-                stopReason =
-                    "TARGET_TIMEOUT"
-
-            elseif result == "ROUND_ADVANCED" then
-                local r =
-                    gameRound()
-
-                if r then
-                    completedRound =
-                        r - 1
-
-                    lastRound = r
-
-                    state =
-                        "GATE"
-
-                    portalLog(
-                        "COMBAT -> GATE from ROUND_ADVANCED completedRound="
-                            .. tostring(
-                                completedRound
-                            )
-                    )
-                end
+                task.wait(0.08)
+            else
+                task.wait(0.10)
             end
         else
-            if not noLocalEnemySince then
+            local enemy =
+                nearestEnemy()
+
+            if enemy then
                 noLocalEnemySince =
-                    os.clock()
-            end
+                    nil
 
-            -- IMPORTANT:
-            -- Global EnemyNpc is intentionally ignored here.
-            -- Only current-room enemies can interrupt combat.
-            local localCount =
-                #localLiveEnemies()
+                local result =
+                    fightEnemy(enemy)
 
-            if localCount == 0
-                and os.clock()
-                    - noLocalEnemySince
-                    >= CFG.NO_ENEMY_STABLE_TIME
-            then
-                -- DragonEgg may be the current-room continuation.
-                if interactNearbyEgg() then
-                    noLocalEnemySince =
-                        os.clock()
+                if result == "SETTLEMENT" then
+                    stopReason =
+                        "SETTLEMENT_REACHED"
 
-                    task.wait(0.35)
-                else
-                    task.wait(0.08)
+                elseif result == "OUT_OF_LIVES" then
+                    stopReason =
+                        "OUT_OF_LIVES"
+
+                elseif result == "TARGET_TIMEOUT" then
+                    stopReason =
+                        "TARGET_TIMEOUT"
+
+                elseif result == "ROUND_ADVANCED" then
+                    local r =
+                        gameRound()
+
+                    if r then
+                        lastRound = r
+
+                        moveToGateOrHoldEgg(
+                            r - 1,
+                            "FIGHT_RESULT"
+                        )
+                    end
                 end
             else
-                task.wait(0.06)
-            end
-        end
+                if not noLocalEnemySince then
+                    noLocalEnemySince =
+                        os.clock()
+                end
 
-    elseif state == "GATE" then
-        -- NON-INTERRUPTIBLE STATE.
-        -- Do not inspect or chase ANY enemies here.
+                local localCount =
+                    #localLiveEnemies()
 
-        if not completedRound then
-            completedRound =
-                (gameRound() or 1) - 1
-        end
+                if localCount == 0
+                    and os.clock()
+                        - noLocalEnemySince
+                        >= CFG.NO_ENEMY_STABLE_TIME
+                then
+                    local eggResult =
+                        handleDragonEggStrict()
 
-        if os.clock()
-            >= gateRetryAt
-        then
-            local row =
-                selectDoorForCompletedRound(
-                    completedRound
-                )
-
-            if row then
-                local ok,
-                    result =
-                        openAndCrossSelectedDoor(
-                            row
-                        )
-
-                portalLog(
-                    "GATE_RESULT ok="
-                        .. tostring(ok)
-                        .. " result="
-                        .. tostring(result)
-                )
-
-                if ok then
-                    portalsInvoked += 1
-
-                    if result
+                    if eggResult
                         == "SETTLEMENT"
                     then
                         stopReason =
                             "SETTLEMENT_REACHED"
-                    else
-                        state =
-                            "COMBAT"
 
-                        CurrentState =
-                            state
-
-                        lockRegion(
-                            "AFTER_GATE"
-                        )
-
-                        CurrentCombatRound =
-                            gameRound()
-
-                        lastRound =
-                            gameRound()
-                            or lastRound
-
-                        completedRound =
-                            nil
+                    elseif eggResult
+                        == "DONE"
+                    then
+                        finishPendingGateAfterEgg()
 
                         noLocalEnemySince =
-                            nil
+                            os.clock()
 
-                        task.wait(0.45)
+                        task.wait(0.08)
+
+                    elseif eggResult
+                        == "RETRY"
+                    then
+                        noLocalEnemySince =
+                            os.clock()
+
+                        task.wait(0.12)
+                    else
+                        task.wait(0.08)
                     end
                 else
-                    -- Keep gate ownership. Never fall back to combat just
-                    -- because distant/global enemies exist.
+                    task.wait(0.06)
+                end
+            end
+        end
+
+    elseif state == "GATE" then
+        -- Last-second protection against the old race:
+        -- if an unbroken egg streams/replicates while GATE owns control,
+        -- give control back to COMBAT immediately.
+        local blockingEgg =
+            currentDragonEgg()
+
+        if blockingEgg then
+            pendingGateRound =
+                completedRound
+                or (
+                    (gameRound() or 1)
+                    - 1
+                )
+
+            state =
+                "COMBAT"
+
+            noLocalEnemySince =
+                nil
+
+            task.wait(0.06)
+        else
+            -- NON-INTERRUPTIBLE gate state for normal enemies.
+            if not completedRound then
+                completedRound =
+                    pendingGateRound
+                    or (
+                        (gameRound() or 1)
+                        - 1
+                    )
+
+                pendingGateRound =
+                    nil
+            end
+
+            if os.clock()
+                >= gateRetryAt
+            then
+                local row =
+                    selectDoorForCompletedRound(
+                        completedRound
+                    )
+
+                if row then
+                    local ok,
+                        result =
+                            openAndCrossSelectedDoor(
+                                row
+                            )
+
+                    if ok then
+                        portalsInvoked += 1
+
+                        if result
+                            == "SETTLEMENT"
+                        then
+                            stopReason =
+                                "SETTLEMENT_REACHED"
+                        else
+                            state =
+                                "COMBAT"
+
+                            CurrentState =
+                                state
+
+                            lockRegion(
+                                "AFTER_GATE"
+                            )
+
+                            CurrentCombatRound =
+                                gameRound()
+
+                            lastRound =
+                                gameRound()
+                                or lastRound
+
+                            completedRound =
+                                nil
+
+                            pendingGateRound =
+                                nil
+
+                            noLocalEnemySince =
+                                nil
+
+                            task.wait(0.45)
+                        end
+                    else
+                        gateRetryAt =
+                            os.clock() + 0.6
+
+                        task.wait(0.10)
+                    end
+                else
                     gateRetryAt =
-                        os.clock() + 0.6
+                        os.clock() + 0.5
 
                     task.wait(0.10)
                 end
             else
-                -- Door may stream in a moment. Stay in GATE.
-                gateRetryAt =
-                    os.clock() + 0.5
-
-                task.wait(0.10)
+                task.wait(0.06)
             end
-        else
-            task.wait(0.06)
         end
     end
 
@@ -3760,7 +4224,7 @@ while not stopReason do
 end
 
 --========================================================--
--- SMART SETTLEMENT / REPLAY / LOBBY V59
+-- SMART SETTLEMENT / REPLAY / LOBBY V59.4
 --
 -- The farm does NOT return to Lobby after every win.
 --
@@ -3777,8 +4241,8 @@ end
 --   * dungeon failed / timed out / out of lives
 --
 -- Combat remains NO-Mouse1.
--- Play Again uses the exact GameRoundRE server route recovered from
--- ScreenSettlement. No settlement UI click is required.
+-- Replay tries the exact settlement signal/callback/remotes first, then
+-- same-PlaceId teleport with original match teleport data before Lobby.
 --========================================================--
 
 local LOBBY_PLACE_ID =
@@ -4117,28 +4581,164 @@ local function lobbyMaintenanceNeeded()
             levels.AtkBonusValue
         )
 
-    if points > 0
+    -- Do not bounce Lobby for every single level-up.
+    -- Batch small permanent-stat gains and spend them during periodic
+    -- maintenance or when 3+ points accumulate.
+    if points >= 3
         and attackLv
             < ATTACK_SOFT_CAP
     then
         return true,
-            "ATTRIBUTE_POINTS"
+            "ATTRIBUTE_BATCH"
     end
 
+    -- Keep a little more headroom before interrupting a repeat streak.
     if inventoryCountNow()
-        >= INVENTORY_CLEAN_AT
+        >= 90
     then
         return true,
             "INVENTORY_HIGH"
     end
 
-    local better,
-        betterReason =
-            betterEquipmentWaiting()
+    -- Tiny equipment upgrades can wait for periodic maintenance.
+    -- A missing slot / materially better item is still worth returning for.
+    local equipment =
+        d.Equipment
 
-    if better then
-        return true,
-            betterReason
+    if type(equipment)
+        == "table"
+    then
+        local owned =
+            equipment.Owned
+            or {}
+
+        local slots =
+            equipment.EquipSlots
+            or {}
+
+        local active =
+            equipment.CurWeaponSlot
+            or "Weapon"
+
+        local equippedUUID =
+            slots[active]
+
+        local equippedBase =
+            equipmentBaseReplay(
+                equippedUUID
+            )
+
+        local equippedPower =
+            equipmentPowerReplay(
+                equippedUUID
+            )
+
+        local bestBase =
+            equippedBase
+
+        local bestPower =
+            equippedPower
+
+        for uuid, item in pairs(owned) do
+            if type(item) == "table"
+                and item.Type == "Weapon"
+                and item.Class == "Sword"
+            then
+                local base =
+                    equipmentBaseReplay(
+                        uuid
+                    )
+
+                local pwr =
+                    equipmentPowerReplay(
+                        uuid
+                    )
+
+                if base > bestBase
+                    or (
+                        base == bestBase
+                        and pwr > bestPower
+                    )
+                then
+                    bestBase = base
+                    bestPower = pwr
+                end
+            end
+        end
+
+        if not equippedUUID
+            and bestBase > 0
+        then
+            return true,
+                "MISSING_SWORD"
+        end
+
+        if bestBase
+                >= equippedBase + 2
+            or (
+                equippedPower > 0
+                and bestPower
+                    >= equippedPower * 1.25
+            )
+        then
+            return true,
+                "MAJOR_SWORD_UPGRADE"
+        end
+
+        for _, armorClass in ipairs({
+            "Helmet",
+            "Breastplate",
+        }) do
+            local equipped =
+                slots[armorClass]
+
+            local equippedArmorPower =
+                equipmentPowerReplay(
+                    equipped
+                )
+
+            local bestArmorPower =
+                equippedArmorPower
+
+            for uuid, item in pairs(owned) do
+                if type(item) == "table"
+                    and item.Type == "Armor"
+                    and item.Class
+                        == armorClass
+                then
+                    bestArmorPower =
+                        math.max(
+                            bestArmorPower,
+                            equipmentPowerReplay(
+                                uuid
+                            )
+                        )
+                end
+            end
+
+            if not equipped
+                and bestArmorPower > 0
+            then
+                return true,
+                    "MISSING_"
+                    .. string.upper(
+                        armorClass
+                    )
+            end
+
+            if equippedArmorPower > 0
+                and bestArmorPower
+                    >= equippedArmorPower
+                        * 1.25
+            then
+                return true,
+                    "MAJOR_"
+                    .. string.upper(
+                        armorClass
+                    )
+                    .. "_UPGRADE"
+            end
+        end
     end
 
     return false,
@@ -4543,6 +5143,27 @@ local function directLobby(reason)
 end
 
 
+local REPLAY_STATUS_FILE =
+    "IronSoul_LastReplay_V59_4.txt"
+
+local EGG_STATUS_FILE =
+    "IronSoul_LastEgg_V59_4.txt"
+
+local function writeTinyStatus(
+    path,
+    text
+)
+    if type(writefile)
+        == "function"
+    then
+        pcall(
+            writefile,
+            path,
+            tostring(text)
+        )
+    end
+end
+
 local function findNativePlayAgainButton()
     local pg =
         LocalPlayer:
@@ -4578,93 +5199,230 @@ local function findNativePlayAgainButton()
             )
 end
 
-local function fireNativePlayAgainCallback()
-    local button =
-        findNativePlayAgainButton()
+local function waitReplayUIReady(
+    timeout
+)
+    return waitUntil(
+        function()
+            local button =
+                findNativePlayAgainButton()
 
-    if not button then
-        return false,
-            "NO_PLAY_AGAIN_BUTTON"
-    end
+            if not button
+                or not effectivelyVisible(
+                    button
+                )
+            then
+                return nil
+            end
 
-    -- Diagnostic proved the real game callback is attached specifically to
-    -- MouseButton1Down. Execute the game's callback directly: no VIM mouse.
-    if type(getconnections)
-        == "function"
-    then
-        local ok, conns =
-            pcall(
-                getconnections,
-                button.MouseButton1Down
+            local players =
+                num(
+                    GameRoundCfg:
+                        GetAttribute(
+                            "PlayersCount"
+                        )
+                )
+
+            if players <= 0 then
+                return nil
+            end
+
+            return button
+        end,
+        timeout,
+        0.08
+    )
+end
+
+local function replayEvidence(
+    oldRound,
+    oldVotes,
+    timeout
+)
+    local deadline =
+        os.clock() + timeout
+
+    local voteAccepted =
+        false
+
+    while os.clock()
+        < deadline
+    do
+        local teleportAttr =
+            LocalPlayer:
+                GetAttribute(
+                    "IsTeleporting"
+                )
+
+        if teleportAttr ~= nil
+            and teleportAttr ~= false
+        then
+            return "TELEPORT",
+                teleportAttr
+        end
+
+        local votes =
+            num(
+                GameRoundCfg:
+                    GetAttribute(
+                        "VotedAgainCount"
+                    )
             )
 
-        if ok then
-            for _, conn in ipairs(conns) do
-                local fn =
-                    conn.Function
+        if votes > oldVotes then
+            voteAccepted = true
+        end
 
-                if type(fn)
-                    == "function"
-                then
-                    local source = ""
+        local settled =
+            settlementDetected()
 
-                    if debug
-                        and debug.info
-                    then
-                        pcall(function()
-                            source =
-                                tostring(
-                                    debug.info(
-                                        fn,
-                                        "s"
-                                    )
-                                )
-                        end)
-                    end
+        local nowRound =
+            gameRound()
 
-                    if string.find(
-                        source,
-                        "ScreenSettlement",
-                        1,
-                        true
+        if not settled
+            and (
+                nowRound == nil
+                or nowRound <= 1
+                or (
+                    oldRound
+                    and nowRound < oldRound
+                )
+            )
+        then
+            return "SAME_SERVER_RESET",
+                votes
+        end
+
+        task.wait(0.08)
+    end
+
+    if voteAccepted then
+        return "VOTE_ACCEPTED",
+            num(
+                GameRoundCfg:
+                    GetAttribute(
+                        "VotedAgainCount"
                     )
-                    then
-                        local callOk,
-                            callErr =
-                                pcall(fn)
+            )
+    end
 
-                        return callOk,
-                            callOk
-                            and "GAME_CALLBACK"
-                            or tostring(
-                                callErr
-                            )
+    return nil,
+        num(
+            GameRoundCfg:
+                GetAttribute(
+                    "VotedAgainCount"
+                )
+        )
+end
+
+local function executeSettlementConnection(
+    button
+)
+    if type(getconnections)
+        ~= "function"
+    then
+        return false
+    end
+
+    local ok, conns =
+        pcall(
+            getconnections,
+            button.MouseButton1Down
+        )
+
+    if not ok then
+        return false
+    end
+
+    for _, conn in ipairs(conns) do
+        local fn =
+            conn.Function
+
+        if type(fn)
+            == "function"
+        then
+            local constants = nil
+
+            if type(getconstants)
+                == "function"
+            then
+                pcall(function()
+                    constants =
+                        getconstants(fn)
+                end)
+            end
+
+            local isReplay =
+                false
+
+            if type(constants)
+                == "table"
+            then
+                for _, value in pairs(
+                    constants
+                ) do
+                    if value
+                        == "VotePlayAgain"
+                    then
+                        isReplay = true
+                        break
                     end
+                end
+            end
+
+            if isReplay then
+                local callOk =
+                    pcall(fn)
+
+                if callOk then
+                    return true
                 end
             end
         end
     end
 
-    if type(firesignal)
-        == "function"
-    then
-        local ok, err =
-            pcall(
-                firesignal,
-                button.MouseButton1Down
+    return false
+end
+
+local function samePlaceReplayFallback(
+    teleportData
+)
+    queueNext(
+        "same-place replay fallback"
+    )
+
+    important(
+        "Replay | same-place fallback"
+    )
+
+    writeTinyStatus(
+        REPLAY_STATUS_FILE,
+        "Route=SAME_PLACE_TELEPORT"
+            .. "\nPlaceId="
+            .. tostring(
+                game.PlaceId
             )
+            .. "\nTeleportData="
+            .. tostring(
+                teleportData
+            )
+    )
 
-        if ok then
-            return true,
-                "FIRESIGNAL_MOUSEDOWN"
-        end
+    -- Preserve the exact matchmaking teleport context that brought this
+    -- player into the current dungeon. World is implicit in this PlaceId;
+    -- DiffLevel / owner / player-count context is carried through unchanged.
+    local ok, err =
+        pcall(function()
+            TeleportService:
+                Teleport(
+                    game.PlaceId,
+                    LocalPlayer,
+                    teleportData
+                )
+        end)
 
-        return false,
-            tostring(err)
-    end
-
-    return false,
-        "NO_CALLBACK_ROUTE"
+    return ok,
+        err
 end
 
 local function attemptDirectReplay(
@@ -4680,6 +5438,14 @@ local function attemptDirectReplay(
         num(
             journal.FailureCount
         )
+
+    local teleportData = nil
+
+    pcall(function()
+        teleportData =
+            TeleportService:
+                GetLocalPlayerTeleportData()
+    end)
 
     writeJournal({
         State = "REPLAYING",
@@ -4705,161 +5471,241 @@ local function attemptDirectReplay(
     })
 
     queueNext(
-        "native Play Again callback"
+        "same-stage replay"
     )
+
+    important(
+        "Replay | same stage"
+    )
+
+    local button =
+        waitReplayUIReady(
+            6
+        )
 
     local oldRound =
         gameRound()
 
-    local teleported =
-        false
-
-    local conn =
-        LocalPlayer.OnTeleport:
-            Connect(function()
-                teleported = true
-            end)
-
-    important(
-        "Victory | replaying same stage"
-    )
-
-    local sent,
-        route =
-            fireNativePlayAgainCallback()
-
-    -- Last fallback: exact remote learned from settlement code.
-    if not sent then
-        local remotes =
-            ReplicatedStorage:
-                FindFirstChild(
-                    "Remotes"
+    local oldVotes =
+        num(
+            GameRoundCfg:
+                GetAttribute(
+                    "VotedAgainCount"
                 )
-
-        local gameRoundRE =
-            remotes
-            and remotes:
-                FindFirstChild(
-                    "GameRoundRE"
-                )
-
-        if gameRoundRE
-            and gameRoundRE:IsA(
-                "RemoteEvent"
-            )
-        then
-            sent =
-                pcall(function()
-                    gameRoundRE:
-                        FireServer(
-                            "VotePlayAgain"
-                        )
-                end)
-
-            route =
-                "REMOTE_FALLBACK"
-        end
-    end
-
-    if not sent then
-        pcall(function()
-            conn:Disconnect()
-        end)
-
-        important(
-            "Replay failed | returning Lobby"
         )
 
-        return false,
-            route
-    end
-
-    local deadline =
-        os.clock() + 12
-
-    while os.clock()
-        < deadline
-    do
-        local teleportAttr =
-            LocalPlayer:
+    local players =
+        num(
+            GameRoundCfg:
                 GetAttribute(
-                    "IsTeleporting"
+                    "PlayersCount"
                 )
+        )
 
-        if teleported
-            or (
-                teleportAttr ~= nil
-                and teleportAttr ~= false
-            )
-        then
-            pcall(function()
-                conn:Disconnect()
-            end)
-
-            important(
-                "Replay | next run starting"
+    local gameRoundRE =
+        ReplicatedStorage:
+            FindFirstChild(
+                "Remotes"
             )
 
-            return true,
-                "TELEPORT"
-        end
-
-        local settled =
-            settlementDetected()
-
-        local nowRound =
-            gameRound()
-
-        if not settled
-            and (
-                nowRound == nil
-                or nowRound <= 1
-                or (
-                    oldRound
-                    and nowRound < oldRound
-                )
-            )
-        then
-            pcall(function()
-                conn:Disconnect()
-            end)
-
-            important(
-                "Replay | same-server reset"
+    gameRoundRE =
+        gameRoundRE
+        and gameRoundRE:
+            FindFirstChild(
+                "GameRoundRE"
             )
 
-            task.defer(function()
-                task.wait(0.8)
+    local routes = {}
 
-                local loader =
-                    getgenv().IronSoulLoadRaw
-
-                if type(loader)
-                    == "function"
-                then
-                    loader(
-                        "systems/combat.lua"
-                    )
-                end
-            end)
-
-            return true,
-                "SAME_PLACE"
-        end
-
-        task.wait(0.10)
+    -- 1) Exact real GUI signal. This runs BOTH normal GUI behavior and
+    -- ScreenSettlement's MouseButton1Down callback, without moving/clicking mouse.
+    if button
+        and type(firesignal)
+            == "function"
+    then
+        table.insert(
+            routes,
+            {
+                Name =
+                    "FIRESIGNAL_MOUSEDOWN",
+                Run =
+                    function()
+                        return pcall(
+                            firesignal,
+                            button.MouseButton1Down
+                        )
+                    end,
+            }
+        )
     end
 
-    pcall(function()
-        conn:Disconnect()
-    end)
+    -- 2) Exact ScreenSettlement connection discovered by constants.
+    if button then
+        table.insert(
+            routes,
+            {
+                Name =
+                    "SETTLEMENT_CONNECTION",
+                Run =
+                    function()
+                        return executeSettlementConnection(
+                            button
+                        )
+                    end,
+            }
+        )
+    end
+
+    -- 3) Exact normal replay remote.
+    if gameRoundRE
+        and gameRoundRE:IsA(
+            "RemoteEvent"
+        )
+    then
+        table.insert(
+            routes,
+            {
+                Name =
+                    "VOTE_PLAY_AGAIN",
+                Run =
+                    function()
+                        return pcall(function()
+                            gameRoundRE:
+                                FireServer(
+                                    "VotePlayAgain"
+                                )
+                        end)
+                    end,
+            }
+        )
+
+        -- 4) Server's explicit independent replay route.
+        table.insert(
+            routes,
+            {
+                Name =
+                    "PLAY_AGAIN_ALONE",
+                Run =
+                    function()
+                        return pcall(function()
+                            gameRoundRE:
+                                FireServer(
+                                    "PlayAgainAlone"
+                                )
+                        end)
+                    end,
+            }
+        )
+    end
+
+    for _, route in ipairs(routes) do
+        local ok =
+            route.Run()
+
+        if ok then
+            local evidence,
+                detail =
+                    replayEvidence(
+                        oldRound,
+                        oldVotes,
+                        2.5
+                    )
+
+            writeTinyStatus(
+                REPLAY_STATUS_FILE,
+                "Route="
+                    .. route.Name
+                    .. "\nEvidence="
+                    .. tostring(evidence)
+                    .. "\nDetail="
+                    .. tostring(detail)
+                    .. "\nPlayersCount="
+                    .. tostring(players)
+                    .. "\nVotesBefore="
+                    .. tostring(oldVotes)
+                    .. "\nVotesAfter="
+                    .. tostring(
+                        GameRoundCfg:
+                            GetAttribute(
+                                "VotedAgainCount"
+                            )
+                    )
+            )
+
+            if evidence
+                == "TELEPORT"
+                or evidence
+                    == "SAME_SERVER_RESET"
+            then
+                important(
+                    "Replay | restarting"
+                )
+
+                return true,
+                    route.Name
+            end
+
+            if evidence
+                == "VOTE_ACCEPTED"
+            then
+                -- Server accepted the replay vote. Give it longer to perform
+                -- the actual restart before trying another route.
+                local finalEvidence =
+                    replayEvidence(
+                        oldRound,
+                        oldVotes,
+                        10
+                    )
+
+                if finalEvidence
+                    == "TELEPORT"
+                    or finalEvidence
+                        == "SAME_SERVER_RESET"
+                then
+                    important(
+                        "Replay | restarting"
+                    )
+
+                    return true,
+                        route.Name
+                end
+            end
+        end
+    end
+
+    -- 5) User-requested fallback: rejoin the SAME battle PlaceId with the
+    -- exact original matchmaking teleport data instead of bouncing Lobby.
+    if type(teleportData)
+        == "table"
+    then
+        local samePlaceOk,
+            samePlaceErr =
+                samePlaceReplayFallback(
+                    teleportData
+                )
+
+        if samePlaceOk then
+            return true,
+                "SAME_PLACE_TELEPORT"
+        end
+
+        writeTinyStatus(
+            REPLAY_STATUS_FILE,
+            "Route=SAME_PLACE_TELEPORT"
+                .. "\nResult=FAILED"
+                .. "\nError="
+                .. tostring(
+                    samePlaceErr
+                )
+        )
+    end
 
     important(
-        "Replay timeout | returning Lobby"
+        "Replay | all same-stage routes failed"
     )
 
     return false,
-        "REPLAY_TIMEOUT"
+        "ALL_REPLAY_ROUTES_FAILED"
 end
 
 --========================================================--
