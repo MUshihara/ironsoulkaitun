@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - ENEMY-FIRST STRICT-TRANSITION COMBAT V60.5
+-- IRON SOUL - PHYSICAL GATE FRONTIER COMBAT V60.6
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -136,6 +136,13 @@ local CFG = {
     -- If the room-volume lock is stale after a section teleport, nearby
     -- real enemies must win over any portal/gate logic.
     SPATIAL_ENEMY_RADIUS = 240,
+
+    -- Physical gate frontier:
+    -- server-openable nearby doors must be consumed before any portal.
+    FRONTIER_DOOR_PLAYER_MAX = 170,
+    FRONTIER_DOOR_REGION_MAX = 115,
+    FRONTIER_EXACT_BONUS = 22,
+    FRONTIER_ROUND_GAP_PENALTY = 14,
 
     -- Only the exact RoundDoor.Portal can be used, never Workspace.Portal.
     SECTION_PORTAL_NEAR_DISTANCE = 85,
@@ -2407,6 +2414,281 @@ local function fireExactPortalTouch(
     end
 end
 
+--========================================================--
+-- V60.6 PHYSICAL GATE FRONTIER
+--
+-- Exact game rule recovered from LocalRoundDoor:
+--   a closed door is server-openable when RoundNum < GameRound.
+--
+-- Earlier versions required ONLY RoundNum == GameRound-1. On multi-section
+-- maps that can leave an older physical gate closed, then allow a portal
+-- to jump past it.
+--
+-- This selector ranks ALL currently-openable closed doors near the player
+-- and current room. A nearby physical gate always blocks adaptive portal
+-- navigation until the gate is actually opened.
+--========================================================--
+
+getgenv().IronSoulSelectFrontierDoor =
+    function(expectedRound)
+        if not Root then
+            return nil
+        end
+
+        local current =
+            tonumber(
+                gameRound()
+            )
+
+        if not current then
+            return nil
+        end
+
+        local region =
+            CurrentCombatRegion
+            or ensureRegion()
+
+        local rows = {}
+
+        for _, row in ipairs(
+            physicalDoorRows()
+        ) do
+            if row.Switch ~= 1
+                and row.RoundNum
+                and row.RoundNum < current
+                and row.Root
+                and row.Root.Parent
+                and row.Prompt
+                and row.Prompt.Parent
+            then
+                local playerDist =
+                    (
+                        row.PromptPos
+                        - Root.Position
+                    ).Magnitude
+
+                local regionDist =
+                    region
+                    and boxDistance(
+                        region,
+                        row.PromptPos
+                    )
+                    or math.huge
+
+                local plausible =
+                    playerDist
+                        <= CFG.FRONTIER_DOOR_PLAYER_MAX
+                    and (
+                        not region
+                        or regionDist
+                            <= CFG.FRONTIER_DOOR_REGION_MAX
+                        or playerDist <= 70
+                    )
+
+                if plausible then
+                    local gap =
+                        math.max(
+                            0,
+                            (current - 1)
+                                - row.RoundNum
+                        )
+
+                    local score =
+                        playerDist
+                        + (
+                            regionDist
+                                ~= math.huge
+                            and regionDist * 0.35
+                            or 0
+                        )
+                        + gap
+                            * CFG.FRONTIER_ROUND_GAP_PENALTY
+
+                    if expectedRound
+                        and row.RoundNum
+                            == expectedRound
+                    then
+                        score -=
+                            CFG.FRONTIER_EXACT_BONUS
+                    end
+
+                    row.PlayerDistance =
+                        playerDist
+
+                    row.RegionDistance =
+                        regionDist
+
+                    row.FrontierScore =
+                        score
+
+                    table.insert(
+                        rows,
+                        row
+                    )
+                end
+            end
+        end
+
+        table.sort(
+            rows,
+            function(a,b)
+                if math.abs(
+                    a.FrontierScore
+                    - b.FrontierScore
+                ) > 0.01
+                then
+                    return a.FrontierScore
+                        < b.FrontierScore
+                end
+
+                return a.PlayerDistance
+                    < b.PlayerDistance
+            end
+        )
+
+        local chosen =
+            rows[1]
+
+        if chosen then
+            getgenv().IronSoulNavTrace(
+                "FRONTIER_GATE round="
+                    .. tostring(
+                        chosen.RoundNum
+                    )
+                    .. " expected="
+                    .. tostring(
+                        expectedRound
+                    )
+                    .. " current="
+                    .. tostring(
+                        current
+                    )
+                    .. " playerDist="
+                    .. string.format(
+                        "%.1f",
+                        chosen.PlayerDistance
+                    )
+                    .. " regionDist="
+                    .. (
+                        chosen.RegionDistance
+                            == math.huge
+                        and "inf"
+                        or string.format(
+                            "%.1f",
+                            chosen.RegionDistance
+                        )
+                    )
+                    .. " pos="
+                    .. tostring(
+                        chosen.PromptPos
+                    )
+            )
+
+            if type(writefile)
+                == "function"
+            then
+                local lines = {
+                    "GameRound="
+                        .. tostring(current),
+                    "ExpectedRound="
+                        .. tostring(
+                            expectedRound
+                        ),
+                    "PlayerPos="
+                        .. tostring(
+                            Root.Position
+                        ),
+                    "CurrentRegion="
+                        .. tostring(
+                            region
+                            and fullName(
+                                region
+                            )
+                        ),
+                    "ChosenRound="
+                        .. tostring(
+                            chosen.RoundNum
+                        ),
+                    "ChosenPos="
+                        .. tostring(
+                            chosen.PromptPos
+                        ),
+                    "ChosenPlayerDist="
+                        .. tostring(
+                            chosen.PlayerDistance
+                        ),
+                    "ChosenRegionDist="
+                        .. tostring(
+                            chosen.RegionDistance
+                        ),
+                    "ChosenScore="
+                        .. tostring(
+                            chosen.FrontierScore
+                        ),
+                    "Candidates="
+                        .. tostring(
+                            #rows
+                        ),
+                }
+
+                for i = 1,
+                    math.min(
+                        6,
+                        #rows
+                    )
+                do
+                    local row =
+                        rows[i]
+
+                    table.insert(
+                        lines,
+                        "#"
+                            .. tostring(i)
+                            .. " Round="
+                            .. tostring(
+                                row.RoundNum
+                            )
+                            .. " PlayerDist="
+                            .. string.format(
+                                "%.1f",
+                                row.PlayerDistance
+                            )
+                            .. " RegionDist="
+                            .. (
+                                row.RegionDistance
+                                    == math.huge
+                                and "inf"
+                                or string.format(
+                                    "%.1f",
+                                    row.RegionDistance
+                                )
+                            )
+                            .. " Score="
+                            .. string.format(
+                                "%.1f",
+                                row.FrontierScore
+                            )
+                            .. " Pos="
+                            .. tostring(
+                                row.PromptPos
+                            )
+                    )
+                end
+
+                pcall(
+                    writefile,
+                    "IronSoul_LastGateDecision_V60_6.txt",
+                    table.concat(
+                        lines,
+                        "\n"
+                    )
+                )
+            end
+        end
+
+        return chosen
+    end
+
 local function portalTeleportEvidence(
     beforePos,
     oldRegion
@@ -4584,6 +4866,102 @@ while not stopReason do
                                     )
                             )
 
+                            -- A physical server-openable gate always
+                            -- has priority over portal scanning.
+                            local frontier =
+                                getgenv().IronSoulSelectFrontierDoor(
+                                    nil
+                                )
+
+                            if frontier then
+                                getgenv().IronSoulNavTrace(
+                                    "STAGING_GATE_BLOCK round="
+                                        .. tostring(
+                                            frontier.RoundNum
+                                        )
+                                        .. " pos="
+                                        .. tostring(
+                                            frontier.PromptPos
+                                        )
+                                )
+
+                                -- Re-lock the closest room if possible, then
+                                -- open/cross THIS physical frontier gate.
+                                lockRegion(
+                                    "STAGING_FRONTIER_GATE"
+                                )
+
+                                local doorOk,
+                                    doorResult =
+                                        openAndCrossSelectedDoor(
+                                            frontier
+                                        )
+
+                                if doorOk then
+                                    portalsInvoked += 1
+
+                                    writePhaseAudit(
+                                        "STAGING_FRONTIER_GATE",
+                                        frontier.RoundNum,
+                                        doorResult
+                                    )
+
+                                    getgenv().IronSoulNavTrace(
+                                        "STAGING_GATE_OPENED round="
+                                            .. tostring(
+                                                frontier.RoundNum
+                                            )
+                                            .. " result="
+                                            .. tostring(
+                                                doorResult
+                                            )
+                                            .. " Pos="
+                                            .. tostring(
+                                                Root.Position
+                                            )
+                                    )
+
+                                    lockRegion(
+                                        "AFTER_STAGING_FRONTIER_GATE"
+                                    )
+
+                                    CurrentCombatRound =
+                                        gameRound()
+
+                                    lastRound =
+                                        gameRound()
+                                        or lastRound
+
+                                    noLocalEnemySince =
+                                        nil
+
+                                    getgenv().IronSoulStagingState.NoEnemySince =
+                                        nil
+
+                                    task.wait(0.45)
+
+                                    continue
+                                else
+                                    -- IMPORTANT: do NOT jump to adaptive
+                                    -- portal logic while a legitimate physical
+                                    -- gate remains closed. Retry the gate.
+                                    getgenv().IronSoulNavTrace(
+                                        "STAGING_GATE_RETRY round="
+                                            .. tostring(
+                                                frontier.RoundNum
+                                            )
+                                            .. " result="
+                                            .. tostring(
+                                                doorResult
+                                            )
+                                    )
+
+                                    task.wait(0.35)
+
+                                    continue
+                                end
+                            end
+
                             local resolver =
                                 getgenv().IronSoulTransitionResolver
 
@@ -4822,6 +5200,30 @@ while not stopReason do
                         completedRound
                     )
 
+                local frontier =
+                    getgenv().IronSoulSelectFrontierDoor(
+                        completedRound
+                    )
+
+                -- Prefer the frontier door if:
+                --   * exact selector found nothing, OR
+                --   * the exact door is substantially farther away.
+                --
+                -- This prevents walking back to an old duplicate branch door
+                -- after a section teleport.
+                if frontier
+                    and (
+                        not row
+                        or not row.PlayerDistance
+                        or frontier.PlayerDistance
+                            + 24
+                            < row.PlayerDistance
+                    )
+                then
+                    row =
+                        frontier
+                end
+
                 if row then
                         local ok,
                             result =
@@ -4891,6 +5293,7 @@ while not stopReason do
                 -- If old door logic has been unable to progress for a while,
                 -- run the generalized high-confidence resolver.
                 if not row
+                    and not frontier
                     and not adaptiveDone
                     and state == "GATE"
                     and getgenv().IronSoulAdaptiveGateState.EnteredAt
