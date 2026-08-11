@@ -1,12 +1,7 @@
--- IRON SOUL - V61.13.2 24/7 LOBBY PREFLIGHT
+-- IRON SOUL - V61.18 24/7 LOBBY PREFLIGHT
 --
--- Fresh-account recon proved PlayerData.LevelData.Level is authoritative even
--- when the historical LG_Level client mirror never appears. Resolve readiness
--- from PlayerData, then install a LOCAL compatibility mirror before loading the
--- already-proven lobby body. No extra lobby diff is needed for this.
---
--- V61.17 addition: after PlayerData readiness, resolve any pending Cave reward
--- audit in Lobby where material replication is authoritative.
+-- Fresh-account PlayerData readiness + post-Cave audit + SMART Cave scheduler.
+-- The historical proven Lobby body remains unchanged behind this wrapper.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -20,12 +15,12 @@ local function status(text)
     if type(fn) == "function" then
         pcall(fn, text)
     end
-    print("[IronSoul Lobby V61.13.2]", text)
+    print("[IronSoul Lobby V61.18]", text)
 end
 
 local function writeReadiness(text)
     if type(writefile) == "function" then
-        pcall(writefile, "IronSoul_LobbyReadiness_V61_13_2.txt", tostring(text or ""))
+        pcall(writefile, "IronSoul_LobbyReadiness_V61_18.txt", tostring(text or ""))
     end
 end
 
@@ -127,7 +122,7 @@ while stableReady < 4 do
         lastReport = os.clock()
 
         writeReadiness(table.concat({
-            "Version=V61.13.2",
+            "Version=V61.18",
             "Elapsed=" .. string.format("%.2f", elapsed),
             "Ready=" .. tostring(ready),
             "StableChecks=" .. tostring(stableReady) .. "/4",
@@ -156,8 +151,7 @@ getgenv().IronSoulResolvedLevelSource = finalLevelSource
 
 -- Historical proven lobby code reads LG_Level in its own readiness/planner.
 -- Fresh accounts may never receive that client mirror, so provide the exact
--- level we just read from authoritative PlayerData. This is a LOCAL compatibility
--- mirror only; it does not mutate server PlayerData or spend/claim anything.
+-- level read from authoritative PlayerData. This is LOCAL compatibility only.
 if LocalPlayer:GetAttribute("LG_Level") == nil and tonumber(finalLevel) then
     pcall(LocalPlayer.SetAttribute, LocalPlayer, "LG_Level", tonumber(finalLevel))
     status("Fresh level compatibility | LG_Level=" .. tostring(finalLevel) .. " from " .. tostring(finalLevelSource))
@@ -165,9 +159,7 @@ end
 
 status("Lobby PlayerData ready | Lv" .. tostring(finalLevel) .. " via " .. tostring(finalLevelSource))
 
--- Cave rewards can replicate too late to be measured reliably inside the Cave
--- settlement frame. Resolve the pending baseline here, after authoritative Lobby
--- PlayerData readiness, without delaying or changing the proven lobby planner.
+-- Resolve any Cave material delta after authoritative Lobby PlayerData readiness.
 do
     local loadRaw = getgenv().IronSoulLoadRaw
     if type(loadRaw) == "function" then
@@ -216,6 +208,31 @@ loadstring(game:HttpGet(%q .. "?t=" .. tostring(os.time())))()
     end
 end
 
+-- SMART Cave planning is an external module, not a patch to the historical
+-- Lobby body. If it starts a paid Cave run, stop this Lobby cycle here. If it
+-- declines/errors, fail closed into the proven Story planner below.
+do
+    local loadRaw = getgenv().IronSoulLoadRaw
+    if type(loadRaw) == "function" then
+        local okPlanner, planner = loadRaw("systems/cave_planner.lua")
+
+        if okPlanner and type(planner) == "table" and type(planner.Run) == "function" then
+            local okRun, handled, detail = pcall(planner.Run)
+
+            if okRun and handled == true then
+                status("SMART Cave handled | " .. tostring(detail))
+                return true
+            elseif not okRun then
+                status("Cave planner failed closed | " .. tostring(handled))
+            else
+                status("Cave planner -> Story | " .. tostring(detail))
+            end
+        elseif not okPlanner then
+            status("Cave planner unavailable -> Story | " .. tostring(planner))
+        end
+    end
+end
+
 local function getPatcher()
     local loadRaw = getgenv().IronSoulLoadRaw
     if type(loadRaw) == "function" then
@@ -229,7 +246,7 @@ local function getPatcher()
     local fn, err = loadstring(source)
     assert(fn, err)
     local patcher = fn()
-    assert(type(patcher) == "function", "V61.13.2 lobby patch loader unavailable")
+    assert(type(patcher) == "function", "V61.18 lobby patch loader unavailable")
     return patcher
 end
 
