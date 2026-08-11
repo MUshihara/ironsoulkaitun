@@ -1,8 +1,12 @@
 --========================================================--
--- IRON SOUL - IMMUTABLE BASE PATCH LOADER V1
+-- IRON SOUL - IMMUTABLE BASE PATCH LOADER V2
 --
--- Loads an immutable historical source revision, applies one verified unified
--- diff stored in this repo, then compiles/executes the patched source.
+-- Loads an immutable historical source revision, applies verified unified
+-- diffs stored in this repo, then compiles/executes the patched source.
+--
+-- V2 keeps exact-context safety but no longer trusts stale hunk line numbers
+-- blindly. If prior patches shift a later hunk, the loader re-anchors that
+-- hunk only when its complete unchanged/removed source sequence matches.
 --========================================================--
 
 local function splitLines(text)
@@ -68,6 +72,135 @@ local function applyUnifiedDiff(
         end
     end
 
+    local function sourceRowsForHunk(
+        firstRow,
+        lastRow
+    )
+        local rows = {}
+
+        for n = firstRow, lastRow do
+            local row = diff[n]
+            local prefix =
+                string.sub(row, 1, 1)
+
+            if prefix == " "
+                or prefix == "-"
+            then
+                table.insert(
+                    rows,
+                    string.sub(row, 2)
+                )
+            end
+        end
+
+        return rows
+    end
+
+    local function hunkMatchesAt(
+        position,
+        sourceRows
+    )
+        if position < srcIndex then
+            return false
+        end
+
+        if #sourceRows == 0 then
+            return true
+        end
+
+        if position + #sourceRows - 1
+            > #src
+        then
+            return false
+        end
+
+        for offset, expected in ipairs(
+            sourceRows
+        ) do
+            if src[position + offset - 1]
+                ~= expected
+            then
+                return false
+            end
+        end
+
+        return true
+    end
+
+    local function resolveHunkStart(
+        expectedStart,
+        sourceRows
+    )
+        if #sourceRows == 0 then
+            return math.max(
+                srcIndex,
+                expectedStart
+            )
+        end
+
+        if hunkMatchesAt(
+            expectedStart,
+            sourceRows
+        )
+        then
+            return expectedStart
+        end
+
+        -- Search the remaining immutable/patched source for the exact old
+        -- hunk sequence. Choose the unique nearest match to the recorded
+        -- location. This tolerates line drift but never fuzzy text changes.
+        local best = nil
+        local bestDistance = math.huge
+        local tied = false
+
+        local lastPossible =
+            #src - #sourceRows + 1
+
+        for position = srcIndex,
+            lastPossible
+        do
+            if hunkMatchesAt(
+                position,
+                sourceRows
+            )
+            then
+                local distance =
+                    math.abs(
+                        position
+                        - expectedStart
+                    )
+
+                if distance < bestDistance then
+                    best = position
+                    bestDistance = distance
+                    tied = false
+                elseif distance == bestDistance then
+                    tied = true
+                end
+            end
+        end
+
+        if best and not tied then
+            return best
+        end
+
+        if tied then
+            error(
+                "patch hunk anchor ambiguous near source line "
+                    .. tostring(expectedStart)
+                    .. " for "
+                    .. tostring(targetPath)
+            )
+        end
+
+        error(
+            "patch hunk source not found near source line "
+                .. tostring(expectedStart)
+                .. " for "
+                .. tostring(targetPath)
+        )
+    end
+
     while i <= #diff do
         local line = diff[i]
 
@@ -85,23 +218,44 @@ local function applyUnifiedDiff(
 
             oldStart = tonumber(oldStart)
 
-            if not oldStart then
+            if oldStart == nil then
                 error(
                     "bad hunk header: "
                         .. tostring(line)
                 )
             end
 
-            copyUntil(oldStart)
-            i += 1
+            local firstRow = i + 1
+            local lastRow = firstRow - 1
+            local scan = firstRow
 
-            while i <= #diff
+            while scan <= #diff
                 and string.sub(
-                    diff[i],
+                    diff[scan],
                     1,
                     2
                 ) ~= "@@"
             do
+                lastRow = scan
+                scan += 1
+            end
+
+            local sourceRows =
+                sourceRowsForHunk(
+                    firstRow,
+                    lastRow
+                )
+
+            local anchor =
+                resolveHunkStart(
+                    oldStart,
+                    sourceRows
+                )
+
+            copyUntil(anchor)
+            i = firstRow
+
+            while i <= lastRow do
                 local row = diff[i]
                 local prefix =
                     string.sub(row, 1, 1)
