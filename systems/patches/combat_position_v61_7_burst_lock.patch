@@ -1,0 +1,81 @@
+--- a/systems/combat_position.lua
++++ b/systems/combat_position.lua
+@@ -1,5 +1,5 @@
+ --========================================================--
+--- IRON SOUL - CONTINUOUS DODGE COMBAT POSITION V61.4
++-- IRON SOUL - BOSS-SAFE CONTINUOUS COMBAT POSITION V61.7
+ --
+ -- Attack rotation never pauses because of these profiles.
+ --
+@@ -43,6 +43,12 @@
+         LastPlayerHitAt =
+             -math.huge,
+ 
++        -- Keep one escape direction through a whole enemy attack burst.
++        -- V61.4 flipped side on every repeated hit, which can oscillate back
++        -- through the same lingering hitbox.
++        HitBurstUntil =
++            -math.huge,
++
+         LastTargetHP = nil,
+         LastTargetDamageAt =
+             os.clock(),
+@@ -230,6 +236,9 @@
+         S.LastPlayerHitAt =
+             -math.huge
+ 
++        S.HitBurstUntil =
++            -math.huge
++
+         S.LastHumanoidState =
+             humanoidState
+ 
+@@ -327,8 +336,27 @@
+                     - S.LastPlayerHitAt
+                 <= D.CFG.ADAPTIVE_REPEAT_HIT_WINDOW
+ 
++            local sameBurst =
++                now < S.HitBurstUntil
++
+             S.IncomingHits += 1
+-            S.Side = -S.Side
++
++            -- Pick one escape side at the start of a burst and KEEP it.
++            -- Reversing on every damage tick was observed to cause
++            -- left-right oscillation while the boss hitbox was still active.
++            if not sameBurst then
++                S.Side = -S.Side
++            end
++
++            S.HitBurstUntil =
++                now
++                + (
++                    tonumber(
++                        D.CFG.ADAPTIVE_HIT_BURST_HOLD
++                    )
++                    or 1.15
++                )
++
+             S.LastPlayerHitAt =
+                 now
+ 
+@@ -354,6 +382,10 @@
+                     .. tostring(
+                         repeated
+                     )
++                    .. " sameBurst="
++                    .. tostring(
++                        sameBurst
++                    )
+             )
+ 
+             if lowHPRatio(
+@@ -589,6 +621,8 @@
+                 ),
+             LastPlayerHitAt =
+                 S.LastPlayerHitAt,
++            HitBurstUntil =
++                S.HitBurstUntil,
+             LastTargetHP =
+                 S.LastTargetHP,
+             LastTargetDamageAt =
