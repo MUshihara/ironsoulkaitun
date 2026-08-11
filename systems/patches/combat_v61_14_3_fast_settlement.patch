@@ -1,0 +1,169 @@
+--- a/systems/combat.lua
++++ b/systems/combat.lua
+@@ -7988,7 +7988,7 @@
+     -- Keep a little more headroom before interrupting a repeat streak.
+     if inventoryCountNow()
+-        >= 90
++        >= INVENTORY_CLEAN_AT
+     then
+         return true,
+             "INVENTORY_HIGH"
+@@ -8498,7 +8498,7 @@
+     queueNext(
+         "dungeon -> lobby: "
+             .. tostring(reason)
+     )
+ 
+-    task.wait(0.20)
++    task.wait(0.05)
+ 
+     local remote =
+         WorldUtil
+@@ -8546,7 +8546,7 @@
+                         end
+                     end,
+-                    5,
++                    2.0,
+                     0.10
+                 )
+ 
+@@ -8871,13 +8871,43 @@
+     -- Give settlement UI/server state time to fully settle.
+     local button =
+         waitReplayUIReady(
+-            8
++            1.40
+         )
+ 
+-    task.wait(0.65)
++    if not button then
++        important(
++            "Replay | UI unavailable, returning Lobby"
++        )
++
++        return false,
++            "REPLAY_UI_NOT_READY"
++    end
++
++    -- Re-check capacity immediately before any replay mutation. Rewards can
++    -- make the bag cross the maintenance threshold after settlement.
++    local replayBagFull,
++        replayBagReason =
++            dungeonBagFullStatus()
++
++    local replayInventory =
++        inventoryCountNow()
++
++    if replayBagFull
++        or replayInventory
++            >= INVENTORY_CLEAN_AT
++    then
++        important(
++            "Replay | maintenance required, returning Lobby"
++        )
++
++        return false,
++            replayBagFull
++            and tostring(replayBagReason)
++            or "INVENTORY_HIGH"
++    end
++
++    task.wait(0.18)
+ 
+     local oldRound =
+         gameRound()
+@@ -8934,7 +8964,7 @@
+                     )
+                 end,
+                 oldRound,
+-                12,
++                1.10,
+                 players
+             )
+ 
+@@ -8969,7 +8999,7 @@
+                         )
+                 end,
+                 oldRound,
+-                15,
++                1.45,
+                 players
+             )
+ 
+@@ -8981,7 +9011,7 @@
+         end
+ 
+         -- Retry the independent route once, after a short server cooldown.
+-        task.wait(0.8)
++        task.wait(0.15)
+ 
+         ok =
+             runReplayRoute(
+@@ -8996,7 +9026,7 @@
+                         )
+                 end,
+                 oldRound,
+-                15,
++                1.45,
+                 players
+             )
+ 
+@@ -9028,7 +9058,7 @@
+                         )
+                 end,
+                 oldRound,
+-                15,
++                1.10,
+                 players
+             )
+ 
+@@ -9320,6 +9350,43 @@
+     return
+ end
+ 
++-- Fast 24/7 maintenance exit. If the account already knows the bag is full
++-- or equipment inventory has reached the cleanup threshold, do not wait for
++-- settlement replay UI and do not attempt Play Again at all.
++local immediateBagFull,
++    immediateBagReason,
++    immediateOreUsed,
++    immediateOreMax =
++        dungeonBagFullStatus()
++
++local immediateInventory =
++    inventoryCountNow()
++
++if immediateBagFull
++    or immediateInventory
++        >= INVENTORY_CLEAN_AT
++then
++    important(
++        "Maintenance | immediate Lobby | "
++            .. tostring(
++                immediateBagFull
++                and immediateBagReason
++                or "INVENTORY_HIGH"
++            )
++    )
++
++    writeJournal({
++        State = "FAST_MAINTENANCE",
++        Decision = "LOBBY_MAINTENANCE",
++        World = journal.World or "?",
++        Diff = journal.Diff or "?",
++        DirectRepeats = 0,
++        FailureCount = journal.FailureCount or 0,
++        UpdatedAt = os.time(),
++    })
++
++    directLobby(
++        immediateBagFull
++        and ("BAG_FULL_" .. tostring(immediateBagReason))
++        or "INVENTORY_HIGH"
++    )
++
++    return
++end
++
+ -- Let settlement rewards / clear state replicate.
+ task.wait(1.25)
