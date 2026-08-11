@@ -1,6 +1,6 @@
 -- IRON SOUL - V61.8 COMBAT ENTRY
 -- Applies V61.7 boss-safe tuning plus V61.8 burst-safe positioning values
--- to the immutable V61.6 combat source.
+-- and lightweight skill-cast telemetry to the immutable V61.6 combat source.
 
 local function getPatcher()
     local loadRaw =
@@ -46,5 +46,6 @@ return getPatcher()({
     patch_paths = {
         "systems/patches/combat_v61_7_boss_safe.patch",
         "systems/patches/combat_v61_8_burst_safe.patch",
+        "systems/patches/combat_v61_8_skill_telemetry.patch",
     },
 })
