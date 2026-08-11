@@ -160,3 +160,50 @@
 +            -- V61.14.2: geometric plane crossing is NOT progression proof.
 +            -- Stay in GATE until settlement / GameRound / NEW_REGION evidence.
          end
+@@ -1790,6 +1824,32 @@
+         if getgenv().IronSoulTelemetry then
+             getgenv().IronSoulTelemetry:
+                 Event(
+                     "OPEN_GATE_CROSS_STALL",
+                     "moved="
+                         .. string.format(
+                             "%.1f",
+                             moved
+                         )
+                         .. " final="
+                         .. tostring(
+                             Root.Position
+                         )
+                 )
+         end
++
++        -- V61.15 live route frontier:
++        -- If GameRound already advanced but its wake/objective has not streamed,
++        -- do not repeat the same 41-stud doorway cross forever. Let the external
++        -- place-aware mapper probe farther beyond this exact current-1 gate and
++        -- wait for authoritative current-round evidence. No new combat locals.
++        if getgenv().IronSoulDungeonRouteMapper
++            and getgenv().IronSoulDungeonRouteMapper:
++                AdvanceFromOpenGate(
++                    doorRoot,
++                    doorPos,
++                    outward,
++                    oldRegion,
++                    beforeRound
++                )
++        then
++            if getgenv().IronSoulTelemetry then
++                getgenv().IronSoulTelemetry:
++                    Event(
++                        "OPEN_GATE_ROUTE_MAPPER_SUCCESS",
++                        "round=" .. tostring(row.RoundNum)
++                    )
++            end
++
++            return true,
++                "ROUTE_MAPPER_ADVANCE"
++        end
+ 
+         return false,
+             "OPEN_GATE_CROSS_STALLED"
+     end
