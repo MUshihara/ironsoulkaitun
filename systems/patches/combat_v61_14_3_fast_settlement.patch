@@ -178,52 +178,51 @@
                  players
              )
  
-@@ -9320,6 +9396,43 @@
+@@ -9320,6 +9396,45 @@
      return
  end
  
-+-- Fast 24/7 maintenance exit. If the account already knows the bag is full
-+-- or equipment inventory has reached the cleanup threshold, do not wait for
-+-- settlement replay UI and do not attempt Play Again at all.
-+local immediateBagFull,
-+    immediateBagReason,
-+    immediateOreUsed,
-+    immediateOreMax =
-+        dungeonBagFullStatus()
++-- Fast 24/7 maintenance exit. Keep all temporary values in a nested scope so
++-- this already-large top-level chunk does not retain extra Luau registers.
++do
++    local fastBagFull,
++        fastBagReason =
++            dungeonBagFullStatus()
 +
-+local immediateInventory =
-+    inventoryCountNow()
++    local fastInventory =
++        inventoryCountNow()
 +
-+if immediateBagFull
-+    or immediateInventory
-+        >= INVENTORY_CLEAN_AT
-+then
-+    important(
-+        "Maintenance | immediate Lobby | "
-+            .. tostring(
-+                immediateBagFull
-+                and immediateBagReason
-+                or "INVENTORY_HIGH"
-+            )
-+    )
++    if fastBagFull
++        or fastInventory
++            >= INVENTORY_CLEAN_AT
++    then
++        important(
++            "Maintenance | immediate Lobby | "
++                .. tostring(
++                    fastBagFull
++                    and fastBagReason
++                    or "INVENTORY_HIGH"
++                )
++        )
 +
-+    writeJournal({
-+        State = "FAST_MAINTENANCE",
-+        Decision = "LOBBY_MAINTENANCE",
-+        World = journal.World or "?",
-+        Diff = journal.Diff or "?",
-+        DirectRepeats = 0,
-+        FailureCount = journal.FailureCount or 0,
-+        UpdatedAt = os.time(),
-+    })
++        writeJournal({
++            State = "FAST_MAINTENANCE",
++            Decision = "LOBBY_MAINTENANCE",
++            World = journal.World or "?",
++            Diff = journal.Diff or "?",
++            DirectRepeats = 0,
++            FailureCount = journal.FailureCount or 0,
++            UpdatedAt = os.time(),
++        })
 +
-+    directLobby(
-+        immediateBagFull
-+        and ("BAG_FULL_" .. tostring(immediateBagReason))
-+        or "INVENTORY_HIGH"
-+    )
++        directLobby(
++            fastBagFull
++            and ("BAG_FULL_" .. tostring(fastBagReason))
++            or "INVENTORY_HIGH"
++        )
 +
-+    return
++        return
++    end
 +end
 +
  -- Let settlement rewards / clear state replicate.
