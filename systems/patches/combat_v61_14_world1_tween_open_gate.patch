@@ -1,0 +1,96 @@
+--- a/systems/combat.lua
++++ b/systems/combat.lua
+@@ -1600,25 +1600,78 @@
+         local started =
+             os.clock()
+ 
++        -- V61.14: World1 transition movement is tween/floating movement,
++        -- never Roblox Humanoid walking. Keep the same exact gate geometry
++        -- and evidence checks; only replace the movement driver.
++        local Motion = nil
++
++        if type(getgenv().IronSoulLoadRaw)
++            == "function"
++        then
++            local okMotion,
++                value =
++                    getgenv().IronSoulLoadRaw(
++                        "systems/world1_motion.lua"
++                    )
++
++            if okMotion
++                and type(value)
++                    == "table"
++            then
++                Motion = value
++            end
++        end
++
++        local travelY =
++            Root.Position.Y
++
++        local tweenDestination =
++            Vector3.new(
++                destination.X,
++                travelY,
++                destination.Z
++            )
++
++        if Motion
++            and type(Motion.MoveToPosition)
++                == "function"
++        then
++            Motion.MoveToPosition(
++                Root,
++                tweenDestination,
++                Vector3.new(
++                    doorPos.X,
++                    travelY,
++                    doorPos.Z
++                ),
++                {
++                    Speed = 210,
++                    MaxTime = 0.32,
++                }
++            )
++        else
++            -- Fail closed to an exact CFrame move, never Humanoid:MoveTo.
++            Root.CFrame =
++                CFrame.lookAt(
++                    tweenDestination,
++                    Vector3.new(
++                        doorPos.X,
++                        travelY,
++                        doorPos.Z
++                    )
++                )
++        end
++
++        local started =
++            os.clock()
++
+         while os.clock()
+             - started
+-            < CFG.OPEN_GATE_CROSS_TIMEOUT
++            < 0.90
+         do
+             if not Root
+                 or not Root.Parent
+@@ -1626,17 +1679,7 @@
+                     "CHARACTER_CHANGED"
+             end
+ 
+-            -- Real movement; no CFrame teleport for this recovery.
+-            pcall(
+-                humanoid.MoveTo,
+-                humanoid,
+-                destination
+-            )
+-
+-            task.wait(
+-                CFG.OPEN_GATE_REISSUE
+-            )
++            task.wait(0.05)
+ 
+             if settlementDetected() then
+                 return true,
