@@ -1,22 +1,20 @@
 --========================================================--
--- IRON SOUL - ROUTE-BLOCKER OBJECTIVE RESOLVER V61.12
+-- IRON SOUL - ROUTE-BLOCKER OBJECTIVE RESOLVER V61.12.1
 --
--- Rule:
---   enemies / eggs > exact current-round portal > real route blocker.
+-- Priority:
+--   1) normal enemy / DragonEgg
+--   2) exact current-1 local Portal*
+--      BUT first destroy a real physical blocker on the route to it
+--   3) if no local portal, inspect route toward authoritative current wake
 --
--- This module MUST NOT farm scenery just because it has HitCount.
--- A destroyable can be attacked only when it is the FIRST collidable,
--- tagged DestructibleObject physically blocking the route toward the
--- authoritative current-round portal / wake region.
---
--- Object removal alone is NOT progression success.
+-- NEVER select a target because HitCount/tag/name alone.
+-- NEVER treat object removal alone as progression success.
 --========================================================--
 
 return function(D)
     local R = {}
 
-    local CollectionService =
-        game:GetService("CollectionService")
+    local CollectionService = game:GetService("CollectionService")
 
     local LastTry = -math.huge
     local LastArchiveAt = -math.huge
@@ -24,11 +22,13 @@ return function(D)
 
     local TRY_COOLDOWN = 0.70
     local ARCHIVE_COOLDOWN = 10.0
-
-    local LOCAL_PORTAL_HINT_MAX = 320
-    local BLOCKER_TARGET_MAX = 520
+    local LOCAL_PORTAL_MAX = 320
+    local ROUTE_TARGET_MAX = 520
     local BLOCKER_ATTACK_MAX = 150
 
+    -- These were proven by recon to be ordinary loot/scenery in World2.
+    -- A real progression rock/crystal remains eligible when it is tagged and
+    -- physically blocks the authoritative route.
     local SCENERY_NAMES = {
         tree = true,
         tree1 = true,
@@ -87,10 +87,9 @@ return function(D)
             return tostring(obj)
         end
 
-        local ok, value =
-            pcall(function()
-                return obj:GetFullName()
-            end)
+        local ok, value = pcall(function()
+            return obj:GetFullName()
+        end)
 
         return ok and tostring(value) or tostring(obj.Name)
     end
@@ -113,6 +112,28 @@ return function(D)
         return ok and value == true
     end
 
+    local function progressionEvidence(beforeRound, beforeRegion)
+        if settled() then
+            return "SETTLEMENT"
+        end
+
+        if hasNormalObjective() then
+            return "OBJECTIVE_APPEARED"
+        end
+
+        local nowRound = gameRound()
+        if beforeRound and nowRound and nowRound ~= beforeRound then
+            return "GAME_ROUND_CHANGED"
+        end
+
+        local nowRegion = currentRegion()
+        if beforeRegion and nowRegion and nowRegion ~= beforeRegion then
+            return "REGION_CHANGED"
+        end
+
+        return nil
+    end
+
     local function portalRows()
         local r = root()
         local round = gameRound()
@@ -129,8 +150,7 @@ return function(D)
                 and part.Parent
                 and string.sub(tostring(part.Parent.Name), 1, 6) == "Portal"
             then
-                local roundNum =
-                    tonumber(part:GetAttribute("RoundNum"))
+                local roundNum = tonumber(part:GetAttribute("RoundNum"))
 
                 if roundNum == round - 1 then
                     table.insert(rows, {
@@ -158,91 +178,39 @@ return function(D)
             return nil, nil
         end
 
-        local worldEnemies =
-            workspace:FindFirstChild("WorldEnemys")
-
-        local folder =
-            worldEnemies
-            and worldEnemies:FindFirstChild("RoundWakeTouch")
+        local worldEnemies = workspace:FindFirstChild("WorldEnemys")
+        local folder = worldEnemies and worldEnemies:FindFirstChild("RoundWakeTouch")
 
         if not folder then
             return nil, nil
         end
 
-        local exact =
-            folder:FindFirstChild(
-                "Round" .. tostring(round),
-                true
-            )
+        local exact = folder:FindFirstChild("Round" .. tostring(round), true)
 
-        if exact and exact:IsA("BasePart") then
-            local localPos =
-                exact.CFrame:PointToObjectSpace(r.Position)
-
-            local half = exact.Size * 0.5
-
-            local dx =
-                math.max(math.abs(localPos.X) - half.X, 0)
-
-            local dy =
-                math.max(math.abs(localPos.Y) - half.Y, 0)
-
-            local dz =
-                math.max(math.abs(localPos.Z) - half.Z, 0)
-
-            local distance =
-                Vector3.new(dx, dy, dz).Magnitude
-
-            return exact, distance
+        if not exact or not exact:IsA("BasePart") then
+            return nil, nil
         end
 
-        return nil, nil
+        local localPos = exact.CFrame:PointToObjectSpace(r.Position)
+        local half = exact.Size * 0.5
+
+        local dx = math.max(math.abs(localPos.X) - half.X, 0)
+        local dy = math.max(math.abs(localPos.Y) - half.Y, 0)
+        local dz = math.max(math.abs(localPos.Z) - half.Z, 0)
+
+        return exact, Vector3.new(dx, dy, dz).Magnitude
     end
 
-    local function progressionEvidence(
-        beforeRound,
-        beforeRegion
-    )
-        if settled() then
-            return "SETTLEMENT"
-        end
-
-        if hasNormalObjective() then
-            return "OBJECTIVE_APPEARED"
-        end
-
-        local nowRound = gameRound()
-
-        if beforeRound
-            and nowRound
-            and nowRound ~= beforeRound
-        then
-            return "GAME_ROUND_CHANGED"
-        end
-
-        local nowRegion = currentRegion()
-
-        if beforeRegion
-            and nowRegion
-            and nowRegion ~= beforeRegion
-        then
-            return "REGION_CHANGED"
-        end
-
-        return nil
-    end
-
-    local function taggedDestructibleAncestor(instance)
+    local function destructibleAncestor(instance)
         local current = instance
 
         while current and current ~= workspace do
-            local ok, tagged =
-                pcall(
-                    CollectionService.HasTag,
-                    CollectionService,
-                    current,
-                    "DestructibleObject"
-                )
+            local ok, tagged = pcall(
+                CollectionService.HasTag,
+                CollectionService,
+                current,
+                "DestructibleObject"
+            )
 
             if ok and tagged then
                 return current
@@ -254,49 +222,38 @@ return function(D)
         return nil
     end
 
-    local function isExplicitScenery(obj)
+    local function obviousScenery(obj)
         if not obj then
             return true
         end
 
-        local low =
-            string.lower(tostring(obj.Name or ""))
+        local low = string.lower(tostring(obj.Name or ""))
 
         if SCENERY_NAMES[low] then
             return true
         end
 
-        local dropLoot =
-            obj:GetAttribute("DropLootId")
-
-        if dropLoot ~= nil
-            and tostring(dropLoot) ~= ""
-        then
-            return true
-        end
-
-        return false
+        local dropLoot = obj:GetAttribute("DropLootId")
+        return dropLoot ~= nil and tostring(dropLoot) ~= ""
     end
 
+    -- Return only the FIRST collidable tagged destructible physically hit on
+    -- the route. Decorative tagged models are ignored and raycast continues.
     local function firstRouteBlocker(targetPart)
         local r = root()
 
-        if not r
-            or not targetPart
-            or not targetPart.Parent
-        then
+        if not r or not targetPart or not targetPart.Parent then
             return nil, "NO_ROUTE_TARGET"
         end
 
-        local targetPos = targetPart.Position
-        local total = targetPos - r.Position
-        local distance = total.Magnitude
+        local delta = targetPart.Position - r.Position
+        local targetDistance = delta.Magnitude
 
-        if distance < 4 then
+        if targetDistance < 4 then
             return nil, "TARGET_ALREADY_NEAR"
         end
 
-        if distance > BLOCKER_TARGET_MAX then
+        if targetDistance > ROUTE_TARGET_MAX then
             return nil, "TARGET_TOO_FAR"
         end
 
@@ -310,66 +267,57 @@ return function(D)
             table.insert(excluded, D.LocalPlayer.Character)
         end
 
-        local direction = total
-
-        for _ = 1, 18 do
+        for _ = 1, 20 do
             params.FilterDescendantsInstances = excluded
 
-            local result =
-                workspace:Raycast(
-                    r.Position,
-                    direction,
-                    params
-                )
+            local result = workspace:Raycast(r.Position, delta, params)
 
             if not result or not result.Instance then
                 return nil, "ROUTE_CLEAR"
             end
 
             local hit = result.Instance
-            local blocker =
-                taggedDestructibleAncestor(hit)
+            local blocker = destructibleAncestor(hit)
 
             if blocker then
-                local blockerDistance =
-                    (result.Position - r.Position).Magnitude
+                local d = (result.Position - r.Position).Magnitude
 
                 if hit:IsA("BasePart")
                     and hit.CanCollide == true
-                    and blockerDistance <= BLOCKER_ATTACK_MAX
-                    and not isExplicitScenery(blocker)
+                    and d <= BLOCKER_ATTACK_MAX
+                    and not obviousScenery(blocker)
                 then
                     return {
                         Object = blocker,
                         HitPart = hit,
                         HitPosition = result.Position,
-                        Distance = blockerDistance,
+                        Distance = d,
                         Target = targetPart,
-                        TargetDistance = distance,
+                        TargetDistance = targetDistance,
                     }
                 end
 
                 table.insert(excluded, blocker)
+
+            elseif hit:IsA("BasePart")
+                and (
+                    hit.CanCollide == false
+                    or hit.Transparency >= 0.98
+                )
+            then
+                table.insert(excluded, hit)
+
             else
-                if hit:IsA("BasePart")
-                    and (
-                        hit.CanCollide == false
-                        or hit.Transparency >= 0.98
-                    )
-                then
-                    table.insert(excluded, hit)
-                else
-                    return nil,
-                        "SOLID_NON_DESTRUCTIBLE:"
-                            .. fullName(hit)
-                end
+                -- A normal solid map wall/terrain is not a destroyable
+                -- objective. Do not randomly attack around it.
+                return nil, "SOLID_MAP_GEOMETRY:" .. fullName(hit)
             end
         end
 
         return nil, "RAY_LIMIT"
     end
 
-    local function progressMetric(obj)
+    local function metric(obj)
         if not obj or not obj.Parent then
             return nil
         end
@@ -384,7 +332,6 @@ return function(D)
             "Durability",
         }) do
             local value = obj:GetAttribute(key)
-
             if type(value) == "number" then
                 return key, value
             end
@@ -393,10 +340,7 @@ return function(D)
         return nil
     end
 
-    local function archive(
-        reason,
-        detail
-    )
+    local function archive(reason, detail)
         local now = os.clock()
 
         if now - LastArchiveAt < ARCHIVE_COOLDOWN then
@@ -407,31 +351,22 @@ return function(D)
         ProbeSerial += 1
 
         local r = root()
-
-        local text =
-            table.concat({
-                "Version=V61.12",
-                "Reason=" .. tostring(reason),
-                "PlaceId=" .. tostring(game.PlaceId),
-                "GameRound=" .. tostring(gameRound()),
-                "PlayerPos=" .. tostring(r and r.Position),
-                tostring(detail or ""),
-            }, "\n")
+        local text = table.concat({
+            "Version=V61.12.1",
+            "Reason=" .. tostring(reason),
+            "PlaceId=" .. tostring(game.PlaceId),
+            "GameRound=" .. tostring(gameRound()),
+            "PlayerPos=" .. tostring(r and r.Position),
+            tostring(detail or ""),
+        }, "\n")
 
         if type(writefile) == "function" then
-            pcall(
-                writefile,
-                "IronSoul_LastObjectiveProbe_V61_12.txt",
-                text
-            )
+            pcall(writefile, "IronSoul_LastObjectiveProbe_V61_12_1.txt", text)
         end
 
-        local telemetry =
-            getgenv().IronSoulTelemetry
+        local telemetry = getgenv().IronSoulTelemetry
 
-        if telemetry
-            and type(telemetry.ArchiveFile) == "function"
-        then
+        if telemetry and type(telemetry.ArchiveFile) == "function" then
             pcall(
                 telemetry.ArchiveFile,
                 telemetry,
@@ -455,18 +390,10 @@ return function(D)
             return false, "BLOCKER_INVALID"
         end
 
-        local r = root()
-
-        if not r then
-            return false, "NO_ROOT"
-        end
-
+        local obj = row.Object
         local beforeRound = gameRound()
         local beforeRegion = currentRegion()
-        local obj = row.Object
-
-        local metricKey, metricValue =
-            progressMetric(obj)
+        local key, value = metric(obj)
 
         local started = os.clock()
         local lastProgress = started
@@ -474,41 +401,25 @@ return function(D)
 
         emit(
             "OBJECTIVE_ROUTE_BLOCKER_START",
-            "name="
-                .. tostring(obj.Name)
-                .. " path="
-                .. fullName(obj)
-                .. " dist="
-                .. string.format("%.1f", row.Distance)
-                .. " target="
-                .. fullName(row.Target)
-                .. " targetDist="
-                .. string.format("%.1f", row.TargetDistance)
+            "name=" .. tostring(obj.Name)
+                .. " path=" .. fullName(obj)
+                .. " dist=" .. string.format("%.1f", row.Distance)
+                .. " target=" .. fullName(row.Target)
+                .. " targetDist=" .. string.format("%.1f", row.TargetDistance)
         )
 
         while os.clock() - started < 4.2 do
-            local evidence =
-                progressionEvidence(
-                    beforeRound,
-                    beforeRegion
-                )
-
+            local evidence = progressionEvidence(beforeRound, beforeRegion)
             if evidence then
                 return true, evidence
             end
 
             if not obj.Parent then
-                local deadline = os.clock() + 0.65
+                local deadline = os.clock() + 0.70
 
                 while os.clock() < deadline do
                     task.wait(0.08)
-
-                    evidence =
-                        progressionEvidence(
-                            beforeRound,
-                            beforeRegion
-                        )
-
+                    evidence = progressionEvidence(beforeRound, beforeRegion)
                     if evidence then
                         return true, evidence
                     end
@@ -519,17 +430,15 @@ return function(D)
                     "name=" .. tostring(obj.Name)
                 )
 
-                return false,
-                    "BLOCKER_REMOVED_NO_PROGRESSION"
+                return false, "BLOCKER_REMOVED_NO_PROGRESSION"
             end
 
             if hasNormalObjective() then
                 return true, "OBJECTIVE_APPEARED"
             end
 
-            local liveRoot = root()
-
-            if not liveRoot then
+            local r = root()
+            if not r then
                 return false, "NO_ROOT"
             end
 
@@ -539,23 +448,18 @@ return function(D)
                 or row.HitPosition
 
             if hitPos then
-                local delta =
-                    liveRoot.Position - hitPos
-
-                local horizontal =
-                    Vector3.new(
-                        delta.X,
-                        0,
-                        delta.Z
-                    )
+                local horizontal = Vector3.new(
+                    r.Position.X - hitPos.X,
+                    0,
+                    r.Position.Z - hitPos.Z
+                )
 
                 if horizontal.Magnitude < 0.1 then
-                    horizontal =
-                        -Vector3.new(
-                            row.HitPart.CFrame.LookVector.X,
-                            0,
-                            row.HitPart.CFrame.LookVector.Z
-                        )
+                    horizontal = -Vector3.new(
+                        row.HitPart.CFrame.LookVector.X,
+                        0,
+                        row.HitPart.CFrame.LookVector.Z
+                    )
                 end
 
                 if horizontal.Magnitude < 0.1 then
@@ -564,13 +468,8 @@ return function(D)
                     horizontal = horizontal.Unit
                 end
 
-                local goal =
-                    hitPos
-                    + horizontal * 5
-                    + Vector3.new(0, 1.5, 0)
-
-                liveRoot.CFrame =
-                    CFrame.lookAt(goal, hitPos)
+                local goal = hitPos + horizontal * 5 + Vector3.new(0, 1.5, 0)
+                r.CFrame = CFrame.lookAt(goal, hitPos)
             end
 
             if type(D.skillReady) == "function"
@@ -587,48 +486,66 @@ return function(D)
                 pcall(D.sendHeadlessAttack)
             end
 
-            local newKey, newValue =
-                progressMetric(obj)
+            local newKey, newValue = metric(obj)
 
-            if metricKey
-                and newKey == metricKey
-                and type(metricValue) == "number"
+            if key
+                and newKey == key
+                and type(value) == "number"
                 and type(newValue) == "number"
-                and newValue ~= metricValue
+                and newValue ~= value
             then
                 sawProgress = true
                 lastProgress = os.clock()
 
                 emit(
                     "OBJECTIVE_ROUTE_BLOCKER_DAMAGE",
-                    tostring(metricKey)
-                        .. " "
-                        .. tostring(metricValue)
-                        .. "->"
-                        .. tostring(newValue)
+                    tostring(key) .. " " .. tostring(value) .. "->" .. tostring(newValue)
                 )
 
-                metricValue = newValue
+                value = newValue
             elseif newKey then
-                metricKey = newKey
-                metricValue = newValue
+                key = newKey
+                value = newValue
             end
 
-            if not sawProgress
-                and os.clock() - lastProgress >= 1.35
-            then
-                return false,
-                    "NO_CONFIRMED_BLOCKER_DAMAGE"
+            if not sawProgress and os.clock() - lastProgress >= 1.35 then
+                return false, "NO_CONFIRMED_BLOCKER_DAMAGE"
             end
 
             task.wait(0.11)
         end
 
-        if sawProgress then
-            return false, "DAMAGE_PROGRESS"
+        return false, sawProgress and "DAMAGE_PROGRESS" or "NO_CONFIRMED_BLOCKER_DAMAGE"
+    end
+
+    local function resolveBlocker(reason, target, targetLabel)
+        local blocker, why = firstRouteBlocker(target)
+
+        if not blocker then
+            archive(
+                reason,
+                "Target=" .. tostring(targetLabel)
+                    .. "\nRoute=" .. tostring(why)
+            )
+            return false, "NO_ROUTE_BLOCKER:" .. tostring(why)
         end
 
-        return false, "NO_CONFIRMED_BLOCKER_DAMAGE"
+        archive(
+            reason,
+            "BLOCKER=" .. fullName(blocker.Object)
+                .. "\nHitPart=" .. fullName(blocker.HitPart)
+                .. "\nDistance=" .. tostring(blocker.Distance)
+                .. "\nTarget=" .. fullName(blocker.Target)
+        )
+
+        local ok, result = attackBlocker(blocker)
+        emit("OBJECTIVE_ROUTE_BLOCKER_RESULT", tostring(result))
+
+        if ok then
+            return true, "OBJECTIVE_" .. tostring(result)
+        end
+
+        return false, tostring(result)
     end
 
     function R:TryResolve(reason, age)
@@ -647,35 +564,38 @@ return function(D)
         local portals = portalRows()
         local nearestPortal = portals[1]
 
-        if nearestPortal
-            and nearestPortal.Distance <= LOCAL_PORTAL_HINT_MAX
-        then
+        if nearestPortal and nearestPortal.Distance <= LOCAL_PORTAL_MAX then
+            -- IMPORTANT: a valid portal may exist BEHIND a real breakable rock/
+            -- crystal. Do not fast-snap across it. Route blocker gets one chance
+            -- first; if route is clear, portal watchdog owns the transition.
+            local blocker = firstRouteBlocker(nearestPortal.Root)
+
+            if blocker then
+                return resolveBlocker(
+                    "LOCAL_PORTAL_BLOCKED_" .. tostring(reason),
+                    nearestPortal.Root,
+                    nearestPortal.Name
+                )
+            end
+
             emit(
                 "OBJECTIVE_DEFER_TO_PORTAL",
-                "name="
-                    .. tostring(nearestPortal.Name)
-                    .. " round="
-                    .. tostring(nearestPortal.RoundNum)
-                    .. " dist="
-                    .. string.format(
-                        "%.1f",
-                        nearestPortal.Distance
-                    )
+                "name=" .. tostring(nearestPortal.Name)
+                    .. " round=" .. tostring(nearestPortal.RoundNum)
+                    .. " dist=" .. string.format("%.1f", nearestPortal.Distance)
             )
 
-            local watchdog =
-                getgenv().IronSoulTransitionWatchdog
+            local watchdog = getgenv().IronSoulTransitionWatchdog
 
             if watchdog
                 and type(watchdog.Recover) == "function"
                 and tonumber(age)
                 and tonumber(age) >= 0.75
             then
-                local ok, result =
-                    watchdog:Recover(
-                        currentRegion(),
-                        "OBJECTIVE_DEFER_LOCAL_PORTAL"
-                    )
+                local ok, result = watchdog:Recover(
+                    currentRegion(),
+                    "OBJECTIVE_DEFER_LOCAL_PORTAL"
+                )
 
                 if ok then
                     return true, tostring(result)
@@ -685,32 +605,21 @@ return function(D)
             return false, "KNOWN_LOCAL_PORTAL"
         end
 
-        local wake, wakeDistance =
-            currentWake()
+        local wake, wakeDistance = currentWake()
 
         if not wake
             or not wakeDistance
             or wakeDistance <= 3
-            or wakeDistance > BLOCKER_TARGET_MAX
+            or wakeDistance > ROUTE_TARGET_MAX
         then
             archive(
                 reason,
-                "No blocker target."
-                    .. "\nNearestPortal="
-                    .. tostring(
-                        nearestPortal
-                        and nearestPortal.Name
-                    )
+                "NearestPortal="
+                    .. tostring(nearestPortal and nearestPortal.Name)
                     .. "@"
-                    .. tostring(
-                        nearestPortal
-                        and nearestPortal.Distance
-                    )
+                    .. tostring(nearestPortal and nearestPortal.Distance)
                     .. "\nWake="
-                    .. tostring(
-                        wake
-                        and fullName(wake)
-                    )
+                    .. tostring(wake and fullName(wake))
                     .. "@"
                     .. tostring(wakeDistance)
             )
@@ -718,56 +627,11 @@ return function(D)
             return false, "NO_SAFE_BLOCKER_TARGET"
         end
 
-        local blocker, blockerReason =
-            firstRouteBlocker(wake)
-
-        if not blocker then
-            archive(
-                reason,
-                "Wake="
-                    .. fullName(wake)
-                    .. "@"
-                    .. string.format("%.1f", wakeDistance)
-                    .. "\nRoute="
-                    .. tostring(blockerReason)
-            )
-
-            return false,
-                "NO_ROUTE_BLOCKER:"
-                    .. tostring(blockerReason)
-        end
-
-        archive(
+        return resolveBlocker(
             reason,
-            "BLOCKER="
-                .. fullName(blocker.Object)
-                .. "\nHitPart="
-                .. fullName(blocker.HitPart)
-                .. "\nDistance="
-                .. tostring(blocker.Distance)
-                .. "\nTarget="
-                .. fullName(blocker.Target)
+            wake,
+            "RoundWakeTouch.Round" .. tostring(gameRound())
         )
-
-        local ok, result =
-            attackBlocker(blocker)
-
-        emit(
-            "OBJECTIVE_ROUTE_BLOCKER_RESULT",
-            tostring(result)
-        )
-
-        if ok then
-            return true,
-                "OBJECTIVE_"
-                    .. tostring(result)
-        end
-
-        if result == "DAMAGE_PROGRESS" then
-            return false, "DAMAGE_PROGRESS"
-        end
-
-        return false, tostring(result)
     end
 
     return R
