@@ -1,6 +1,6 @@
--- IRON SOUL - V61.8 LOBBY ENTRY
+-- IRON SOUL - V61.10 LOBBY ENTRY
 -- Applies V61.6 balanced forge, V61.7 best-ore reserve policy,
--- and V61.8 per-craft power measurement to the immutable V60.1 lobby source.
+-- V61.8 per-craft power measurement, and V61.10 mobile executor support.
 
 local function getPatcher()
     local loadRaw =
@@ -25,15 +25,13 @@ local function getPatcher()
                 .. tostring(os.time())
         )
 
-    local fn, err =
-        loadstring(source)
-
+    local fn, err = loadstring(source)
     assert(fn, err)
 
     local patcher = fn()
     assert(
         type(patcher) == "function",
-        "V61.8 lobby patch loader unavailable"
+        "V61.10 lobby patch loader unavailable"
     )
 
     return patcher
@@ -47,5 +45,6 @@ return getPatcher()({
         "systems/patches/lobby_v61_6.patch",
         "systems/patches/lobby_v61_7_reserve_best_ore.patch",
         "systems/patches/lobby_v61_8_forge_metrics.patch",
+        "systems/patches/lobby_v61_10_mobile_executor.patch",
     },
 })
