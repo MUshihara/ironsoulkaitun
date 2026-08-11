@@ -1,9 +1,31 @@
 --- a/systems/combat.lua
 +++ b/systems/combat.lua
 @@ -1600,25 +1600,78 @@
-         local started =
-             os.clock()
- 
+-        local started =
+-            os.clock()
+-
+-        while os.clock()
+-            - started
+-            < CFG.OPEN_GATE_CROSS_TIMEOUT
+-        do
+-            if not Root
+-                or not Root.Parent
+-                or humanoid.Health <= 0
+-            then
+-                return true,
+-                    "CHARACTER_CHANGED"
+-            end
+-
+-            -- Real movement; no CFrame teleport for this recovery.
+-            pcall(
+-                humanoid.MoveTo,
+-                humanoid,
+-                destination
+-            )
+-
+-            task.wait(
+-                CFG.OPEN_GATE_REISSUE
+-            )
 +        -- V61.14: World1 transition movement is tween/floating movement,
 +        -- never Roblox Humanoid walking. Keep the same exact gate geometry
 +        -- and evidence checks; only replace the movement driver.
@@ -69,28 +91,16 @@
 +        local started =
 +            os.clock()
 +
-         while os.clock()
-             - started
--            < CFG.OPEN_GATE_CROSS_TIMEOUT
++        while os.clock()
++            - started
 +            < 0.90
-         do
-             if not Root
-                 or not Root.Parent
-@@ -1626,17 +1679,7 @@
-                     "CHARACTER_CHANGED"
-             end
- 
--            -- Real movement; no CFrame teleport for this recovery.
--            pcall(
--                humanoid.MoveTo,
--                humanoid,
--                destination
--            )
--
--            task.wait(
--                CFG.OPEN_GATE_REISSUE
--            )
++        do
++            if not Root
++                or not Root.Parent
++                or humanoid.Health <= 0
++            then
++                return true,
++                    "CHARACTER_CHANGED"
++            end
++
 +            task.wait(0.05)
- 
-             if settlementDetected() then
-                 return true,
