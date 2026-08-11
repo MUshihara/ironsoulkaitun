@@ -36,14 +36,17 @@ Fresh accounts have progressed repeatedly through World1 D1/D2/D3. Normal World1
 - Latest evidence also proved `GameRound=7` can occur while **Round7 wake has not streamed yet**. Old code repeatedly crossed the open Round6 gate to 41 studs forever. V61.15 frontier probing handles this special streamed boss transition.
 - Round7 is correct only when authoritative `GameRound==7`.
 
-## Cave architecture — V61.18
+## Cave architecture — V61.19
 - Three validated Cave Trial worlds:
   - Cave1 / Crystal: PlaceId `91584731222940`, gate Lv10/P480, Crystal Shards.
   - Cave2 / Runes: PlaceId `119524374829397`, gate Lv13/P780, runes in `PlayerData.EnchantedStone.Owned`.
   - Cave3 / Abandoned Courtyard: PlaceId `132445869992129`, gate Lv13/P940, dragon-scale pet materials.
 - All three are **one-room Round1 resource activities**. Do not require Story doors/portals or next-room traversal.
-- Cave2 production log proved distant targets at ~138 studs and ~101 studs. Story combat could stall until manual input; this is now handled by `systems/cave_chase.lua`.
-- Cave chaser: if Round1 needs arming, tween into the wake; if nearest enemy >45 studs, smooth-tween to ~8–9 stud combat position, then proven headless attack owns damage.
+- Cave2 production logs proved distant targets at ~138 studs and ~101 studs; `systems/cave_chase.lua` owns far-enemy approach.
+- **Critical startup race:** V61.18 started Cave chase before `combat.lua` finished loading. One Cave2 test recorded **3 deaths before telemetry `START | controller initialized`**, then cleared in 16.14s after the combat controller came online. Do not move the player toward Cave enemies before combat readiness.
+- V61.19 chaser captures the old telemetry baseline, waits for the current run to publish controller/target/heartbeat readiness, waits for a living stable character after any startup death, then activates tween chase.
+- If readiness never arrives, chaser fails closed and does not move.
+- Chaser log is now an append-style timeline: `IronSoul_CaveChase_V61_19.txt`.
 - Cave one-run policy still returns Lobby after one settlement; no paid replay spam.
 
 ## SMART Cave scheduler — V61.18
