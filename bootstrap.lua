@@ -4,7 +4,7 @@
 
 local url =
     "https://raw.githubusercontent.com/"
-    .. "MUshihara/ironsoulkaitun/main/bootstrap_v61_9.lua"
+    .. "MUshihara/ironsoulkaitun/main/bootstrap_v61_10.lua"
     .. "?t="
     .. tostring(os.time())
 
