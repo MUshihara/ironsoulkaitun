@@ -1,5 +1,6 @@
--- IRON SOUL - V61.6 TRANSITION WATCHDOG ENTRY
--- Applies the verified V61.6 watchdog patch to the immutable V61.5 source.
+-- IRON SOUL - V61.6.1 TRANSITION WATCHDOG ENTRY
+-- Applies the verified V61.6 watchdog patch plus the checkpoint nil hotfix
+-- to the immutable V61.5 source.
 
 local function getPatcher()
     local loadRaw =
@@ -32,7 +33,7 @@ local function getPatcher()
     local patcher = fn()
     assert(
         type(patcher) == "function",
-        "V61.6 patch loader unavailable"
+        "V61.6.1 patch loader unavailable"
     )
 
     return patcher
@@ -44,5 +45,6 @@ return getPatcher()({
     path = "systems/transition_watchdog.lua",
     patch_paths = {
         "systems/patches/watchdog_v61_6.patch",
+        "systems/patches/watchdog_v61_6_1_hotfix.patch",
     },
 })
