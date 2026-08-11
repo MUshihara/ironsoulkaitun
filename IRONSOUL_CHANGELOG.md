@@ -2,6 +2,48 @@
 
 Purpose: chronological record of important production changes, failures, and evidence. Future conversations should read this together with `IRONSOUL_PROJECT_MEMORY.md` before modifying the project.
 
+## 2026-08-11 - V61.11.2 World2 boss-skip regression guard
+### Evidence
+Standalone RAW_RECON_R3 captured World2 D1 after only the first stage was cleared. Authoritative server state was still `GameRound=2` / `GameRoundComplete=1`, but the player was already physically inside `Workspace.World.Room5` near the boss-side area.
+
+Kaitun nav history showed the sequence:
+- objective resolver correctly attacked `Workspace.World.Room1...crystal6`;
+- `crystal6` exposed `HitCount` / `PowerRate` and was tagged `DestructibleObject`;
+- the authoritative round advanced from 1 to 2 after the destructible crystal gate was handled;
+- empty traversal then called the transition watchdog;
+- watchdog selected a replicated Round1 portal more than 1,000 studs away;
+- watchdog CFramed near the remote portal, crossed it, and accepted `PORTAL_MOVED` (>100 stud displacement) as transition success;
+- the resulting bad route was persisted as a successful D1/R2 learned route;
+- the player bounced between the old Round1 portal area and Room5 while server GameRound remained 2.
+
+### Learned
+1. World2 uses real destructible progression objects. `crystal6` / `DestructibleObject` with server-visible `HitCount` is a valid mechanic, not decoration.
+2. Destroying the barrier and advancing GameRound does not mean navigation to the next physical room is finished.
+3. A transition watchdog is a local recovery tool. It must never CFrame to a replicated current-1 portal hundreds/thousands of studs away.
+4. Raw displacement (`PORTAL_MOVED`) is not progression proof.
+5. Persistent route learning must not replay or advertise routes learned from displacement-only evidence.
+
+### Changed
+- Added `watchdog_v61_11_2_progression_guard.patch`.
+- Watchdog portal acquisition is capped at 220 studs.
+- Removed `PORTAL_MOVED` from transition success evidence.
+- Reject old learned routes whose result is `PORTAL_MOVED` or `CHARACTER_CHANGED`.
+- Reject the same unsafe results from `HasLearnedRoute()` so the combat fast path cannot advertise them as proven.
+- Prevent future unsafe results from being saved by `learnSuccess()`.
+- Kept the bounded local movement probes as the fallback when no safe local portal exists.
+
+### Intentionally left untouched
+- World2 destructible-object resolver: the crystal gate detection/attack was correct and produced real GameRound progression.
+- Normal combat positioning/DPS.
+- Proven World1 exact-door and portal traversal logic.
+- Forge/inventory policy.
+
+### Expected verification
+After clearing World2 Round1, GameRound should become 2 and the character should remain on the local route instead of jumping to Room5. The watchdog should ignore far Round1 portals and use local traversal/probing. Boss-room entry should only occur when normal authoritative progression reaches it.
+
+### Status
+Root cause of the boss skip is proven by recon. Correct next-room local traversal behavior is still experimental until the next World2 run.
+
 ## 2026-08-11 - Diagnostic / continuity policy correction
 ### User preference
 Temporary recon scripts should be standalone raw scripts supplied in chat. They should not live in the production GitHub repository unless the user explicitly asks for that.
@@ -105,7 +147,7 @@ Combat patch context mismatch around source line 9244 after preceding patches sh
 Full dungeon success in PlaceId 116456628154258: SETTLEMENT_REACHED, 126.13s, 128 targets, 5 transitions, 0 deaths, headless remote attack, no mouse basic attack.
 
 ### V58
-One-cycle progression passed: World1 Diff2 Level10/Power341 -> Lobby Level11/Power355.
+One-cycle progression passed: World1 Diff2 Level10/Power341 -> Lobby Level11 Power355.
 
 ### V59
 Continuous modular Tutorial -> Lobby -> Dungeon -> Lobby architecture established.
