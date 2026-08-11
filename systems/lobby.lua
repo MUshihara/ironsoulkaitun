@@ -1,14 +1,6 @@
--- IRON SOUL - V61.13 24/7 LOBBY PREFLIGHT
---
--- Keep the proven lobby implementation underneath, but never let a slow fresh
--- account permanently die on the historical 25-second PlayerData gate.
---
--- Policy:
---   * wait indefinitely for real lobby readiness;
---   * report the exact missing readiness signals;
---   * require several consecutive ready checks before entering lobby logic;
---   * queue the stable bootstrap.lua across teleports, never a stale version;
---   * do not patch the early lobby environment again.
+-- IRON SOUL - V61.13.1 24/7 LOBBY PREFLIGHT
+-- Fresh-account truth: PlayerData.LevelData.Level may exist while LG_Level stays nil.
+-- Wait for real DataUtil/PlayerData readiness, then run the proven lobby body.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -18,52 +10,41 @@ local BASE = "https://raw.githubusercontent.com/MUshihara/ironsoulkaitun/main/"
 
 local function status(text)
     text = tostring(text or "")
-
     local fn = getgenv().IronSoulStatus
     if type(fn) == "function" then
         pcall(fn, text)
     end
-
-    print("[IronSoul Lobby V61.13]", text)
+    print("[IronSoul Lobby V61.13.1]", text)
 end
 
 local function writeReadiness(text)
     if type(writefile) == "function" then
-        pcall(
-            writefile,
-            "IronSoul_LobbyReadiness_V61_13.txt",
-            tostring(text or "")
-        )
+        pcall(writefile, "IronSoul_LobbyReadiness_V61_13_1.txt", tostring(text or ""))
     end
 end
 
-local DataUtilModule = nil
-local DataUtil = nil
-
-local function findDataUtil()
-    if DataUtilModule and DataUtilModule.Parent then
-        return DataUtilModule
-    end
-
-    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
-        if obj:IsA("ModuleScript") and obj.Name == "DataUtil" then
-            DataUtilModule = obj
-            return obj
-        end
-    end
-end
+local DataUtilModule
+local DataUtil
 
 local function getDataUtil()
     if type(DataUtil) == "table" then
         return DataUtil
     end
 
-    local module = findDataUtil()
-    if not module then
+    if not DataUtilModule or not DataUtilModule.Parent then
+        for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+            if obj:IsA("ModuleScript") and obj.Name == "DataUtil" then
+                DataUtilModule = obj
+                break
+            end
+        end
+    end
+
+    if not DataUtilModule then
         return nil, "DataUtil module missing"
     end
 
-    local ok, value = pcall(require, module)
+    local ok, value = pcall(require, DataUtilModule)
     if not ok or type(value) ~= "table" then
         return nil, "DataUtil require failed"
     end
@@ -74,10 +55,9 @@ end
 
 local function readiness()
     local missing = {}
-    local data = nil
+    local data
 
     local util, utilErr = getDataUtil()
-
     if not util then
         table.insert(missing, utilErr or "DataUtil unavailable")
     elseif type(util.GetPlayerData) ~= "function" then
@@ -95,17 +75,17 @@ local function readiness()
     end
 
     local loadedAttr = LocalPlayer:GetAttribute("Loaded")
-    local levelAttr = LocalPlayer:GetAttribute("LG_Level")
-    local powerAttr = LocalPlayer:GetAttribute("LG_PowerNew1")
+    local levelAttr = tonumber(LocalPlayer:GetAttribute("LG_Level"))
+    local dataLevel = data and type(data.LevelData) == "table" and tonumber(data.LevelData.Level) or nil
+    local resolvedLevel = levelAttr or dataLevel
+    local powerAttr = tonumber(LocalPlayer:GetAttribute("LG_PowerNew1"))
 
     if loadedAttr == false then
         table.insert(missing, "Loaded=false")
     end
-
-    if levelAttr == nil then
-        table.insert(missing, "LG_Level=nil")
+    if resolvedLevel == nil then
+        table.insert(missing, "Level unavailable")
     end
-
     if powerAttr == nil then
         table.insert(missing, "LG_PowerNew1=nil")
     end
@@ -114,62 +94,49 @@ local function readiness()
         table.concat(missing, ", "),
         data,
         loadedAttr,
-        levelAttr,
+        resolvedLevel,
+        levelAttr and "LG_Level" or (dataLevel and "PlayerData.LevelData.Level" or "none"),
         powerAttr
 end
 
--- Fresh/mobile accounts can take much longer than the old 25-second lobby
--- timeout. For a 24/7 kaitun, waiting with useful state is safer than stopping.
 local started = os.clock()
 local lastReport = -math.huge
 local stableReady = 0
+local finalLevel
+local finalLevelSource
 
 while stableReady < 4 do
-    local ready,
-        missing,
-        data,
-        loadedAttr,
-        levelAttr,
-        powerAttr = readiness()
+    local ready, missing, data, loadedAttr, level, levelSource, power = readiness()
 
     if ready then
         stableReady += 1
+        finalLevel = level
+        finalLevelSource = levelSource
     else
         stableReady = 0
     end
 
     local elapsed = os.clock() - started
-
-    if os.clock() - lastReport >= 2.0 or ready then
+    if os.clock() - lastReport >= 2 or ready then
         lastReport = os.clock()
 
-        local detail = table.concat({
-            "Version=V61.13",
+        writeReadiness(table.concat({
+            "Version=V61.13.1",
             "Elapsed=" .. string.format("%.2f", elapsed),
             "Ready=" .. tostring(ready),
             "StableChecks=" .. tostring(stableReady) .. "/4",
             "Loaded=" .. tostring(loadedAttr),
-            "LG_Level=" .. tostring(levelAttr),
-            "LG_PowerNew1=" .. tostring(powerAttr),
+            "ResolvedLevel=" .. tostring(level),
+            "LevelSource=" .. tostring(levelSource),
+            "LG_PowerNew1=" .. tostring(power),
             "PlayerData=" .. tostring(type(data)),
             "Missing=" .. tostring(missing),
-        }, "\n")
-
-        writeReadiness(detail)
+        }, "\n"))
 
         if ready then
-            status(
-                "Lobby data stabilizing | "
-                    .. tostring(stableReady)
-                    .. "/4"
-            )
+            status("Lobby data stabilizing | " .. stableReady .. "/4 | Lv" .. tostring(level) .. " via " .. tostring(levelSource))
         else
-            status(
-                "Lobby waiting for data | "
-                    .. (missing ~= "" and missing or "unknown")
-                    .. " | "
-                    .. string.format("%.1fs", elapsed)
-            )
+            status("Lobby waiting for data | " .. (missing ~= "" and missing or "unknown") .. " | " .. string.format("%.1fs", elapsed))
         end
     end
 
@@ -178,17 +145,17 @@ while stableReady < 4 do
     end
 end
 
-status("Lobby PlayerData ready | starting progression")
+getgenv().IronSoulResolvedLevel = finalLevel
+getgenv().IronSoulResolvedLevelSource = finalLevelSource
+status("Lobby PlayerData ready | Lv" .. tostring(finalLevel) .. " via " .. tostring(finalLevelSource))
 
--- Always queue the STABLE bootstrap entry. This prevents a continuous session
--- from getting pinned to an old versioned bootstrap after production updates.
+-- Every cross-place continuation goes through the stable entry so 24/7 sessions
+-- automatically pick up future fixes instead of remaining pinned to an old boot.
 do
     local queue = rawget(getgenv(), "queue_on_teleport")
-
     if type(queue) == "function" then
         getgenv().IronSoulQueueBootstrap = function(reason)
             local config = getgenv().IronSoulConfig or {}
-
             local payload = string.format([[
 task.wait(1.35)
 getgenv().IronSoulConfig = getgenv().IronSoulConfig or {
@@ -198,9 +165,7 @@ getgenv().IronSoulConfig = getgenv().IronSoulConfig or {
     HEADLESS = %s,
     DEBUG_LOGS = %s,
 }
-loadstring(game:HttpGet(
-    %q .. "?t=" .. tostring(os.time())
-))()
+loadstring(game:HttpGet(%q .. "?t=" .. tostring(os.time())))()
 ]],
                 tostring(tonumber(config.FPS_CAP) or 8),
                 tostring(config.FARM or "NEWBIE"),
@@ -211,12 +176,8 @@ loadstring(game:HttpGet(
             )
 
             local ok, result = pcall(queue, payload)
-
             if ok then
-                status(
-                    "Queued stable bootstrap | "
-                        .. tostring(reason or "next teleport")
-                )
+                status("Queued stable bootstrap | " .. tostring(reason or "next teleport"))
                 return true
             end
 
@@ -228,28 +189,21 @@ end
 
 local function getPatcher()
     local loadRaw = getgenv().IronSoulLoadRaw
-
     if type(loadRaw) == "function" then
         local ok, patcher = loadRaw("systems/patch_loader.lua")
-
         if ok and type(patcher) == "function" then
             return patcher
         end
     end
 
-    local source = game:HttpGet(
-        BASE .. "systems/patch_loader.lua?t=" .. tostring(os.time())
-    )
-
+    local source = game:HttpGet(BASE .. "systems/patch_loader.lua?t=" .. tostring(os.time()))
     local fn, err = loadstring(source)
     assert(fn, err)
-
     local patcher = fn()
-    assert(type(patcher) == "function", "V61.13 lobby patch loader unavailable")
+    assert(type(patcher) == "function", "V61.13.1 lobby patch loader unavailable")
     return patcher
 end
 
--- Proven lobby body remains unchanged below this preflight.
 return getPatcher()({
     repository = "MUshihara/ironsoulkaitun",
     base_commit = "1d47f7f50ec8ecd92bca691b17d586d6bdecfa55",
@@ -258,5 +212,6 @@ return getPatcher()({
         "systems/patches/lobby_v61_6.patch",
         "systems/patches/lobby_v61_7_reserve_best_ore.patch",
         "systems/patches/lobby_v61_8_forge_metrics.patch",
+        "systems/patches/lobby_v61_13_1_fresh_level.patch",
     },
 })
