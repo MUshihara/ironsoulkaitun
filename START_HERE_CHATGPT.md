@@ -5,31 +5,34 @@ Read this, then `IRONSOUL_PROJECT_MEMORY.md`, then inspect current repo. Long ch
 ## Non-negotiable
 - 24/7 **fresh account -> end progression**.
 - **Headless/API-first:** remotes/modules/server state; no normal mouse/GUI clicking.
+- **No visible portal/gate walking in normal World1 farming.** Teleport/pre-position to the exact valid transition, use only the minimum required touch/handshake, then verify progression.
+- Do not use `Humanoid:MoveTo`/walking as the normal World1 portal fallback.
 - Fast only when authoritative state remains valid.
-- Preserve proven World1 combat/forge/traversal unless evidence requires change.
+- Preserve proven World1 combat/forge unless evidence requires change.
 - Helpers fail closed; a diagnostic/recovery failure must not kill combat.
-- Temporary diagnostics are standalone downloadable **`.lua`** files in chat, never production GitHub.
+- Temporary diagnostics are downloadable **`.lua`** files in chat; output/log files may be `.txt`.
 
 ## Fresh Lobby truth
 - Lobby `117533937949084` is the progression brain.
-- Fresh-account recon proved `DataUtil:GetPlayerData()` can be fully ready with `Loaded=true`, `LG_PowerNew1=110`, but **`LG_Level=nil` permanently**.
-- Real level is `PlayerData.LevelData.Level` (fresh recon: Level 1). Never require `LG_Level` alone.
-- Handle this in the lobby **preflight compatibility layer**, not with another late lobby patch. Resolve PlayerData level, then locally mirror it to `LG_Level` only for the proven historical lobby code.
-- The malformed `lobby_v61_13_1_fresh_level.patch` was deleted. Do not recreate/re-add it.
+- Fresh account may have `Loaded=true` and PlayerData ready while `LG_Level=nil` permanently.
+- Real level is `PlayerData.LevelData.Level`; never require `LG_Level` alone.
+- Handle level compatibility in preflight, not another late lobby patch.
 
-## Current priority
-Freeze World2. Prove **Tutorial -> Lobby -> World1 -> Lobby** first, then expand lobby mechanics.
+## Proven loop
+Fresh account has completed `Lobby -> World1 D1 -> settlement -> Lobby -> next run` cleanly. World1 normal combat/gates are baseline; do not casually retune them.
 
-## Safe architecture reminders
+## Transition safety
 - Enemy/DragonEgg before any destructible.
 - Never infer progression from HitCount/tag, object removal, or raw movement.
-- Never chase far replicated portals or generically force RoundPortal RF; both caused invalid skips.
-- Exact valid local portal + required native/touch handshake + server-state verification.
+- Never chase far replicated portals or generically force RoundPortal RF; this previously skipped rooms/state.
+- World1 current policy: exact current transition -> teleport/touch/verify; no visible walking.
+- World2 remains frozen/isolated until its blocker/PortalD state machine is revisited.
 
-## Mechanic status
-- Proven baseline: headless forge, EquipBest/smart cleanup, pet hatch/equip, task/daily pieces, Sword skills, attributes, Season/Lottery pieces, World1 progression/matchmaking.
-- Pet Fortify/StarUp/SkillUp was mapped but should spend only when materials/duplicates justify it.
-- Fresh recon exposed `EnchantmentUtil`, `FortifyUtil`, `PetsFortifyUtil`, `PetsUpgradeUtil`, `HonorLotteryUtil`, shops, Season systems, etc.; action protocols/policies still need deliberate validation before 24/7 spending.
-- Blessing and any separate Glory Wheel mechanic are not considered mapped just from names.
+## Lobby upgrade recon R2 — useful facts
+- `FortifyUtil.Fortify`: 3 args.
+- `EnchantmentUtil.Enchant`: 5 args; `UnEnchant`: 4 args.
+- `PetsFortifyUtil`, `PetsUpgradeUtil`, `HonorLotteryUtil`, `HonorStoreUtil`, `SeasonUtil`, `SeasonLotteryUtil`, `ConsumableShopUtil` are live.
+- Recon account snapshot: Level 7 / Power 207, Currency1 13,837, SeasonCurrency 1,000, 61 ores, no pets, no enchanted stones.
+- Exact cost/config tables were captured. Do not enable 24/7 spending until the client->server action protocol and conservative spending rule are validated.
 
 Repo is source of truth when chat memory conflicts.
