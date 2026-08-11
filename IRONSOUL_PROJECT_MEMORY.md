@@ -1,10 +1,10 @@
 # Iron Soul Kaitun — Compact Project Memory
 
 ## Goal
-24/7 automatic **fresh account -> end progression**. Headless/API-first, fast, low CPU/RAM. No normal mouse/GUI clicking.
+24/7 automatic **fresh account -> end progression**. Headless/API-first, fast, low CPU/RAM. No normal clicking.
 
-## Current priority
-**World2 tuning is frozen. Rebuild/verify Tutorial -> Lobby -> World1 first.** Lobby is the progression brain.
+## Current focus
+**World2 frozen. Rebuild/verify Tutorial -> Lobby -> World1 -> Lobby.** Lobby is the progression brain.
 
 ## Proven baseline
 - Tutorial `76701861705540`; starter Sword index 1.
@@ -12,50 +12,47 @@
 - Validated World1 dungeon `116456628154258`.
 - V55.2 World1: settlement, 128 targets, 5 transitions, 0 deaths, headless remote attack, no mouse basic.
 - V58 W1D2: Lv10/P341 -> Lobby Lv11/P355.
-- Normal combat is strong (~9-stud elevated; ~5.5 close damage recovery). Do not retune without evidence.
-- Headless forge validated. Strong observed maintenance: ore ~95/100 -> 30/100, 9 crafts, Power 2642 -> 3490.
-- EquipBest/smart cleanup useful.
-- Pet hatch/claim/equip validated.
-- Pet Fortify/StarUp/SkillUp remotes were mapped; growth was disabled when mats/duplicates were insufficient.
-- Main/daily/task pieces, Sword skill equip/unlocks, attributes and Season/Lottery pieces were previously validated.
+- Normal combat is strong; do not retune without evidence.
+- Headless forge, EquipBest/smart cleanup, pet hatch/claim/equip are validated.
+- Pet Fortify/StarUp/SkillUp was mapped; spend only when mats/dupes justify it.
+- Task/daily pieces, Sword skills, attributes and Season/Lottery pieces were previously validated.
 
-## Lobby readiness bug / current fix
-Historical lobby permanently stopped after 25s unless all were ready: `DataUtil:GetPlayerData`, `Loaded != false`, `LG_Level`, `LG_PowerNew1`.
-Current `systems/lobby.lua` has **V61.13 preflight**:
-- waits indefinitely instead of stopping;
-- writes exact missing readiness signals to `IronSoul_LobbyReadiness_V61_13.txt`;
-- requires 4 consecutive ready checks;
-- then runs the proven lobby body unchanged;
-- overrides teleport queue payload to use stable `bootstrap.lua`, so continuous sessions receive future fixes.
+## Fresh Lobby recon — critical facts
+Recon `FULL_LOBBY_RECON_R1` on a fresh account proved:
+- `DataUtil:GetPlayerData(Player)` already returned a table.
+- `Loaded=true`.
+- `LG_PowerNew1=110`.
+- **`LG_Level=nil` stayed nil throughout the full watch.**
+- Authoritative level exists at `PlayerData.LevelData.Level=1`, `XP=0`.
+- Starter equipment: only `Single_BroadSword`, Fortify 1.
+- Pets owned/equipped: empty.
+- World clears/unlocks: empty.
+- Current main guide/task: `Main_001`.
+- SeasonTicket=1; other early currencies mostly 0.
 
-## Lobby systems needing fresh recon before expansion
-- Blessing.
-- Enchant.
-- Merchant/vendor/shop automation.
-- Glory Wheel if separate from the already-known Season/Lottery system.
-- Exact current rules/costs for Pet Fortify/StarUp/SkillUp.
-Do not guess these from old names. Use live modules/remotes/PlayerData evidence.
+Therefore never gate fresh lobby readiness on `LG_Level` alone. Current V61.13.1 lobby uses PlayerData level fallback both in preflight and the proven lobby body.
+
+## Recon-exposed systems worth learning later
+- Equipment: `FortifyUtil.Fortify`, `EnchantmentUtil.CreateEnchantmentSlot/GetEquippedEnchantments`.
+- Pets: `PetsUtil`, `PetsHatchUtil`, `PetsFortifyUtil`, `PetsUpgradeUtil`.
+- Honor: `HonorLotteryUtil`, HonorStore.
+- Season: SeasonUtil / SeasonLotteryUtil / Season shop data.
+- Shops: ConsumableShopUtil, GoldShop/BondShop state.
+- Tasks/dailies: TaskUtil, DailyQuestUtil, SevenDailyUtil, DailyLoginUtil.
+- Skills/attributes: SkillTreeUtil, AttributeUpgradeUtil.
+These names/APIs are discovery evidence, not permission to spend blindly. Validate action protocol + spending rule before enabling 24/7 mutations.
 
 ## Headless rules
 - APIs/remotes/modules/server state first.
-- No normal UI clicking.
-- Fast farming only if authoritative state remains correct.
-- For portals, direct RoundPortal RF is NOT a generic fast path; it previously skipped rooms/state. Use exact valid local portal + native/touch handshake when required.
-- Progression truth: GameRound / settlement / valid objective / valid region, not raw movement.
+- Fast only when authoritative progression remains correct.
+- For portals, direct RoundPortal RF is NOT a generic shortcut; proven able to skip rooms/state.
 - Helpers fail closed and must never kill combat.
+- Diagnostics are standalone downloadable **`.lua`** files from chat; outputs/logs may be `.txt` inside ZIPs.
 
-## World2 facts to retain while frozen
-- D1 place `136216144170036`, MaxRound 6.
-- Portal variant `PortalD` exists.
-- Many ordinary props are `DestructibleObject` with `HitCount`; tag/HitCount alone never means progression.
-- Old bad behavior attacked Tree/IceCrystal/etc and treated removal as success. Do not restore this.
-- World2 experiments stay isolated from proven World1 logic.
+## World2 facts retained while frozen
+- D1 `136216144170036`, MaxRound 6, PortalD exists.
+- Many props have DestructibleObject/HitCount; that alone never proves progression.
+- Do not restore random scenery attacks or far/learned portal skipping.
 
-## Reliability / repo hygiene
-- Avoid fragile late patch stacks when a wrapper/preflight/direct module can enforce policy.
-- Superseded failed patches `watchdog_v61_11_2_progression_guard.patch` and `lobby_v61_10_mobile_executor.patch` were removed.
-- Temporary diagnostics are downloadable standalone `.txt` scripts in chat, not repo.
-- `START_HERE_CHATGPT.md` + this file are the default continuity path. Long changelog only for tracing a specific regression.
-
-## Next
-Run the full standalone lobby recon on a fresh account in Lobby while the normal kaitun is running/waiting. Learn PlayerData load stages + Forge/Fortify/Enchant/Blessing/Pets/Merchant/Glory/Season/Tasks/Skills/Attributes/World/matchmaking surfaces, then make the next lobby production pass from evidence.
+## Next verification
+Use the same normal loader on the fresh account. Confirm V61.13.1 resolves **Lv1 via `PlayerData.LevelData.Level`**, enters lobby logic, performs only already-proven safe maintenance, launches the first valid World1 story run, and returns to Lobby. Send the normal logs afterward. Only then expand Fortify/Enchant/Pet growth/Honor/shops one subsystem at a time from evidence.
