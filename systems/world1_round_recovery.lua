@@ -15,12 +15,15 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+local TeleportService = game:GetService("TeleportService")
 
 local LocalPlayer = Players.LocalPlayer
 local Motion = getgenv().IronSoulWorld1Motion
 
 local Recovery = {}
 local Cache = {}
+
+local LOBBY_PLACE_ID = 117533937949084
 
 Recovery.MIN_ROUTE_DISTANCE = 180
 Recovery.MAX_ROUTE_DISTANCE = 5000
@@ -64,6 +67,72 @@ end
 local function playerRoot()
     local character = LocalPlayer.Character
     return character and character:FindFirstChild("HumanoidRootPart")
+end
+
+local function findModule(name)
+    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+        if obj:IsA("ModuleScript") and obj.Name == name then
+            return obj
+        end
+    end
+end
+
+local function emergencyLobby(reason)
+    emit(
+        "CURRENT_ROUND_ROUTE_FAIL_CLOSED",
+        "reason=" .. tostring(reason)
+            .. " GameRound=" .. tostring(currentRound())
+    )
+
+    local queue = getgenv().IronSoulQueueBootstrap
+    if type(queue) == "function" then
+        pcall(queue, "World1 impossible future-region mismatch -> Lobby")
+    end
+
+    local sent = false
+    local module = findModule("WorldUtil")
+
+    if module then
+        local okRequire, worldUtil = pcall(require, module)
+        if okRequire
+            and type(worldUtil) == "table"
+            and worldUtil.RemoteEvent
+        then
+            sent = pcall(function()
+                worldUtil.RemoteEvent:FireServer("BackLobby")
+            end)
+        end
+    end
+
+    if sent then
+        local deadline = os.clock() + 1.25
+        while os.clock() < deadline do
+            local target = LocalPlayer:GetAttribute("IsTeleporting")
+            if target ~= nil and target ~= false then
+                return true
+            end
+            task.wait(0.08)
+        end
+    end
+
+    pcall(function()
+        TeleportService:Teleport(LOBBY_PLACE_ID, LocalPlayer)
+    end)
+
+    return true
+end
+
+local function regionRound(region)
+    if not region then
+        return nil
+    end
+
+    return tonumber(
+        string.match(
+            tostring(region.Name),
+            "^Round(%d+)$"
+        )
+    )
 end
 
 local function roundNumberFromWake(obj)
@@ -201,6 +270,19 @@ function Recovery:RecoverIfNeeded(oldRegion, reason)
 
     local cf, size, wake, source = wakeData(roundNum)
     if not cf or not size then
+        -- Impossible authoritative mismatch: physically two or more rounds
+        -- ahead with no way to recover the real current wake. Do not hang in an
+        -- empty future boss arena; rebuild the solo run through Lobby.
+        local physicalRound = regionRound(oldRegion)
+        if physicalRound and physicalRound >= roundNum + 2 then
+            return emergencyLobby(
+                "FUTURE_REGION_R"
+                    .. tostring(physicalRound)
+                    .. "_SERVER_R"
+                    .. tostring(roundNum)
+            )
+        end
+
         return false
     end
 
