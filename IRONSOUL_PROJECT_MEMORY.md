@@ -1,61 +1,61 @@
 # Iron Soul Kaitun — Compact Project Memory
 
-## Goal / style
-- Fully automatic NEWBIE -> higher progression, 24/7.
-- Headless, low CPU/RAM, fast.
-- Internal APIs/remotes/modules preferred; no clicking.
-- Preserve proven systems unless telemetry/recon proves a reason to change them.
+## Goal
+24/7 automatic **fresh account -> end progression**. Headless/API-first, fast, low CPU/RAM. No normal mouse/GUI clicking.
 
-## Proven stable knowledge
-- Tutorial: `76701861705540`; starter Sword index 1.
-- Lobby: `117533937949084`.
-- Validated World1 dungeon example: `116456628154258`.
-- V55.2: settlement, 128 targets, 5 transitions, 0 deaths, headless remote attack, no mouse basic.
-- V58 W1 D2: Lv10/P341 -> Lobby Lv11/P355.
-- Normal combat is strong. ~9-stud elevated profile is reliable; ~5.5-stud close recovery restores damage when HP stops moving.
-- Balanced forge/inventory logic is useful; do not casually retune it.
+## Current priority
+**World2 tuning is frozen. Rebuild/verify Tutorial -> Lobby -> World1 first.** Lobby is the progression brain.
 
-## Transition rules that must not be forgotten
-- Exact server progression > movement.
-- Direct RoundPortal RF can skip intermediate rooms; do not use as a generic fast path.
-- Far replicated current-1 portals are unsafe.
-- `PORTAL_MOVED`, large displacement, and object removal are not success.
-- Known exact local portal/gate outranks unknown-object probing.
-- Fast safe portal pattern: exact local `Portal*` -> safe pre-position BEFORE it -> native/touch handshake -> verify round/objective/region.
-- Preserve validated World1 recovery; World2 must not reuse unsafe learned/far-route behavior.
+## Proven baseline
+- Tutorial `76701861705540`; starter Sword index 1.
+- Lobby `117533937949084`.
+- Validated World1 dungeon `116456628154258`.
+- V55.2 World1: settlement, 128 targets, 5 transitions, 0 deaths, headless remote attack, no mouse basic.
+- V58 W1D2: Lv10/P341 -> Lobby Lv11/P355.
+- Normal combat is strong (~9-stud elevated; ~5.5 close damage recovery). Do not retune without evidence.
+- Headless forge validated. Strong observed maintenance: ore ~95/100 -> 30/100, 9 crafts, Power 2642 -> 3490.
+- EquipBest/smart cleanup useful.
+- Pet hatch/claim/equip validated.
+- Pet Fortify/StarUp/SkillUp remotes were mapped; growth was disabled when mats/duplicates were insufficient.
+- Main/daily/task pieces, Sword skill equip/unlocks, attributes and Season/Lottery pieces were previously validated.
 
-## World2 D1 (`136216144170036`)
-- `WorldId=World2`, Diff1, `MaxRound=6`.
-- Correct RoundDoor may be named `PortalD`, not only literal `Portal`.
-- Many ordinary props are tagged `DestructibleObject` and expose `HitCount`/`PowerRate`: trees, chests/coins, IceCrystal, crystals, etc.
-- Therefore `HitCount` or tag alone NEVER proves a progression gate.
-- Bad behavior proved: after Round3->4, old resolver attacked Tree -> IceCrystal -> Tree2 because removal counted as success, then traversal looped while round stayed 4.
-- Full recon proved local `PortalD` can be correct: Round1 PortalD at ~49 studs produced `OBJECTIVE_APPEARED`.
-- Round4 evidence showed Round3 PortalD around ~37-115 studs, while native-only crossing could repeatedly fail.
+## Lobby readiness bug / current fix
+Historical lobby permanently stopped after 25s unless all were ready: `DataUtil:GetPlayerData`, `Loaded != false`, `LG_Level`, `LG_PowerNew1`.
+Current `systems/lobby.lua` has **V61.13 preflight**:
+- waits indefinitely instead of stopping;
+- writes exact missing readiness signals to `IronSoul_LobbyReadiness_V61_13.txt`;
+- requires 4 consecutive ready checks;
+- then runs the proven lobby body unchanged;
+- overrides teleport queue payload to use stable `bootstrap.lua`, so continuous sessions receive future fixes.
 
-## Current World2 production rule
-- `objective_probe.lua` is route-blocker-only: it may attack only the first collidable `DestructibleObject` physically ray-hit on the route to the authoritative current wake, after excluding obvious loot/scenery.
-- Enemy/DragonEgg and exact current portal always win first.
-- Removing a blocker is not enough; success still requires GameRound / settlement / objective / region evidence.
-- `transition_watchdog.lua` uses local current-1 `Portal*` up to 320 studs, safe pre-position, native movement + exact touch, and NO portal RF.
-- World2 does not fall back to the old far/learned watchdog when no safe local current portal exists.
+## Lobby systems needing fresh recon before expansion
+- Blessing.
+- Enchant.
+- Merchant/vendor/shop automation.
+- Glory Wheel if separate from the already-known Season/Lottery system.
+- Exact current rules/costs for Pet Fortify/StarUp/SkillUp.
+Do not guess these from old names. Use live modules/remotes/PlayerData evidence.
 
-## Mobile
-- Detect capabilities, not executor brand.
-- Normalize teleport queue aliases in bootstrap.
-- If no native queue exists, current cycle may continue but re-execution after teleport can be required.
-- Mobile HUD/status file should expose actual runtime errors/state.
+## Headless rules
+- APIs/remotes/modules/server state first.
+- No normal UI clicking.
+- Fast farming only if authoritative state remains correct.
+- For portals, direct RoundPortal RF is NOT a generic fast path; it previously skipped rooms/state. Use exact valid local portal + native/touch handshake when required.
+- Progression truth: GameRound / settlement / valid objective / valid region, not raw movement.
+- Helpers fail closed and must never kill combat.
 
-## Reliability / continuity
-- Avoid fragile late patch stacks when a direct module/wrapper can enforce behavior safely.
-- Diagnostics are standalone downloadable `.txt` scripts supplied in chat, not production GitHub.
-- Current repo beats stale chat memory when they conflict.
-- Read `IRONSOUL_CHANGELOG.md` only when tracing a specific old regression.
+## World2 facts to retain while frozen
+- D1 place `136216144170036`, MaxRound 6.
+- Portal variant `PortalD` exists.
+- Many ordinary props are `DestructibleObject` with `HitCount`; tag/HitCount alone never means progression.
+- Old bad behavior attacked Tree/IceCrystal/etc and treated removal as success. Do not restore this.
+- World2 experiments stay isolated from proven World1 logic.
 
-## Next verification
-Run World2 D1 with current code. Confirm:
-1. enemies are attacked before any destructible;
-2. no Tree/Chest/IceCrystal farming;
-3. local `PortalD` transitions quickly with real progression;
-4. no boss skip / far portal jump;
-5. if a true route blocker exists, only that blocker is attacked and its removal alone does not mark success.
+## Reliability / repo hygiene
+- Avoid fragile late patch stacks when a wrapper/preflight/direct module can enforce policy.
+- Superseded failed patches `watchdog_v61_11_2_progression_guard.patch` and `lobby_v61_10_mobile_executor.patch` were removed.
+- Temporary diagnostics are downloadable standalone `.txt` scripts in chat, not repo.
+- `START_HERE_CHATGPT.md` + this file are the default continuity path. Long changelog only for tracing a specific regression.
+
+## Next
+Run the full standalone lobby recon on a fresh account in Lobby while the normal kaitun is running/waiting. Learn PlayerData load stages + Forge/Fortify/Enchant/Blessing/Pets/Merchant/Glory/Season/Tasks/Skills/Attributes/World/matchmaking surfaces, then make the next lobby production pass from evidence.
