@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - OPEN-GATE TELEMETRY V61.3
+-- IRON SOUL - FAST PORTAL + SURVIVAL TELEMETRY V61.4
 --========================================================--
 
 return function(D)
@@ -19,10 +19,10 @@ return function(D)
     local started = false
 
     local TRACE_FILE =
-        "IronSoul_Telemetry_V61_3.txt"
+        "IronSoul_Telemetry_V61_4.txt"
 
     local STATE_FILE =
-        "IronSoul_LastState_V61_3.txt"
+        "IronSoul_LastState_V61_4.txt"
 
     local function sv(v)
         if v == nil then
@@ -397,7 +397,7 @@ return function(D)
         end)
 
         local lines = {
-            "Version=V61.3",
+            "Version=V61.4",
             "Label="
                 .. sv(label),
             "State="
@@ -595,6 +595,22 @@ return function(D)
                     .. " Yaw="
                     .. sv(
                         combatProfile.Yaw
+                    )
+                    .. " OrbitSpeed="
+                    .. sv(
+                        combatProfile.OrbitSpeed
+                    )
+                    .. " BossLike="
+                    .. sv(
+                        combatProfile.BossLike
+                    )
+                    .. " PlayerRatio="
+                    .. sv(
+                        combatProfile.PlayerRatio
+                    )
+                    .. " HumanoidState="
+                    .. sv(
+                        combatProfile.HumanoidState
                     )
                     .. " IncomingHits="
                     .. sv(
