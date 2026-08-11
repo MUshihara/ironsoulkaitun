@@ -1,0 +1,26 @@
+--- a/systems/combat.lua
++++ b/systems/combat.lua
+@@ -2463,6 +2463,23 @@
+             "CAST "
+                 .. action
+         )
++
++        -- Low-volume proof that native skills are really being used.
++        -- This is important for boss DPS tuning without enabling heavy debug logs.
++        local telemetry =
++            getgenv().IronSoulTelemetry
++
++        if telemetry
++            and type(telemetry.Event)
++                == "function"
++        then
++            pcall(
++                telemetry.Event,
++                telemetry,
++                "SKILL_CAST",
++                tostring(action)
++            )
++        end
+ 
+         return true
+     end
