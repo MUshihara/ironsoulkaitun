@@ -1,24 +1,13 @@
--- IRON SOUL - V61.11.3 LOCAL-SAFE TRANSITION WATCHDOG ENTRY
+-- IRON SOUL - V61.12 LOCAL-SAFE FAST TRANSITION WATCHDOG
 --
--- Keep the previously proven V61.8 watchdog internals untouched, but place a
--- safety wrapper in front of them. This avoids another fragile late diff while
--- fixing the World2 regression discovered from live recon:
---   * current-1 PortalD can be the legitimate local route;
---   * a replicated current-1 Portal can also exist 1000+ studs away;
---   * far portal CFrame recovery must never outrank a local PortalD.
---
--- Wrapper policy:
---   1) Find ALL current-1 RoundDoor portal roots whose parent starts "Portal"
---      (Portal, PortalD, future Portal* variants).
---   2) If a local one exists <= 220 studs, cross it using native Humanoid
---      movement only. No RF force, no far CFrame snap, no displacement-only
---      success signal.
---   3) Require authoritative progression evidence: settlement, objective,
---      GameRound change, or a genuinely new nearby RoundWakeTouch region.
---   4) If current-1 portals exist only far away, refuse recovery instead of
---      letting the historical watchdog snap to them.
---   5) Only when NO current-1 RoundDoor portal is replicated do we delegate to
---      the older learned-route / bounded-probe recovery.
+-- Fast path policy:
+--   * exact current-1 Portal* only;
+--   * local only (<= 320 studs);
+--   * safe pre-position BEFORE portal, never through it;
+--   * native Humanoid movement + exact touch handshake;
+--   * never force RoundPortal RF;
+--   * success requires authoritative progression evidence;
+--   * World2 never falls back to legacy far/learned recovery.
 
 local function getPatcher()
     local loadRaw = getgenv().IronSoulLoadRaw
@@ -39,7 +28,7 @@ local function getPatcher()
     assert(fn, err)
 
     local patcher = fn()
-    assert(type(patcher) == "function", "V61.11.3 watchdog patch loader unavailable")
+    assert(type(patcher) == "function", "V61.12 watchdog patch loader unavailable")
     return patcher
 end
 
@@ -55,14 +44,22 @@ local baseFactory = getPatcher()({
     },
 })
 
-assert(type(baseFactory) == "function", "V61.11.3 base watchdog factory unavailable")
+assert(type(baseFactory) == "function", "V61.12 base watchdog factory unavailable")
 
 return function(D)
     local old = baseFactory(D)
-    assert(type(old) == "table", "V61.11.3 base watchdog build failed")
+    assert(type(old) == "table", "V61.12 base watchdog build failed")
 
     local W = {}
-    local MAX_LOCAL_PORTAL_DISTANCE = 220
+
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+    local MAX_LOCAL_PORTAL_DISTANCE = 320
+    local FAST_APPROACH_DISTANCE = 22
+    local PRE_PORTAL_DISTANCE = 10
+    local ENTER_TIMEOUT = 0.95
+    local CROSS_TIMEOUT = 1.05
+    local VERIFY_TIMEOUT = 0.85
 
     local function emit(name, detail)
         if type(D.event) == "function" then
@@ -76,6 +73,15 @@ return function(D)
         end
 
         local ok, value = pcall(D.getRoot)
+        return ok and value or nil
+    end
+
+    local function getRegion()
+        if type(D.getCurrentRegion) ~= "function" then
+            return nil
+        end
+
+        local ok, value = pcall(D.getCurrentRegion)
         return ok and value or nil
     end
 
@@ -106,6 +112,19 @@ return function(D)
         return ok and tonumber(value) or nil
     end
 
+    local function worldId()
+        local cfg = ReplicatedStorage:FindFirstChild("GameRoundCfg")
+        if cfg then
+            local value = cfg:GetAttribute("WorldId")
+            if value ~= nil then
+                return tostring(value)
+            end
+        end
+
+        local value = workspace:GetAttribute("WorldName")
+        return value ~= nil and tostring(value) or "?"
+    end
+
     local function currentPortalRows()
         local root = getRoot()
         local round = gameRound()
@@ -125,12 +144,11 @@ return function(D)
                 local roundNum = tonumber(part:GetAttribute("RoundNum"))
 
                 if roundNum == round - 1 then
-                    local distance = (part.Position - root.Position).Magnitude
                     table.insert(rows, {
                         Root = part,
                         ParentName = tostring(part.Parent.Name),
                         RoundNum = roundNum,
-                        Distance = distance,
+                        Distance = (part.Position - root.Position).Magnitude,
                     })
                 end
             end
@@ -158,12 +176,9 @@ return function(D)
         end
 
         local root = getRoot()
-        if not root then
-            return nil
-        end
-
-        if type(D.nearestWakeRegion) == "function" then
+        if root and type(D.nearestWakeRegion) == "function" then
             local ok, region, distance = pcall(D.nearestWakeRegion, root.Position)
+
             if ok
                 and region
                 and region ~= beforeRegion
@@ -177,20 +192,52 @@ return function(D)
         return nil
     end
 
-    local function thinAxis(part)
-        if part.Size.X <= part.Size.Z then
-            local v = part.CFrame.RightVector
-            return Vector3.new(v.X, 0, v.Z)
+    local function horizontalUnit(v, fallback)
+        local h = Vector3.new(v.X, 0, v.Z)
+
+        if h.Magnitude < 0.1 then
+            h = fallback or Vector3.new(0, 0, 1)
         end
 
-        local v = part.CFrame.LookVector
-        return Vector3.new(v.X, 0, v.Z)
+        if h.Magnitude < 0.1 then
+            h = Vector3.new(0, 0, 1)
+        end
+
+        return h.Unit
     end
 
-    local function walkFor(humanoid, target, deadline, beforeRound, beforeRegion)
+    local function portalAxis(part)
+        -- Cross through the thinnest horizontal portal dimension.
+        if part.Size.X <= part.Size.Z then
+            return horizontalUnit(part.CFrame.RightVector)
+        end
+
+        return horizontalUnit(part.CFrame.LookVector)
+    end
+
+    local function exactTouch(root, portal)
+        if type(D.firetouchinterest) ~= "function"
+            or not root
+            or not portal
+            or not portal.Parent
+        then
+            return false
+        end
+
+        local ok0 = pcall(D.firetouchinterest, root, portal, 0)
+        task.wait(0.025)
+        local ok1 = pcall(D.firetouchinterest, root, portal, 1)
+
+        return ok0 or ok1
+    end
+
+    local function nativeWalk(humanoid, target, timeout, beforeRound, beforeRegion)
+        local deadline = os.clock() + timeout
+
         while os.clock() < deadline do
-            if hasObjective() or settled() then
-                return progressionEvidence(beforeRound, beforeRegion)
+            local evidence = progressionEvidence(beforeRound, beforeRegion)
+            if evidence then
+                return evidence
             end
 
             local root = getRoot()
@@ -199,13 +246,7 @@ return function(D)
             end
 
             pcall(humanoid.MoveTo, humanoid, target)
-            task.wait(0.08)
-
-            local evidence = progressionEvidence(beforeRound, beforeRegion)
-            if evidence then
-                pcall(humanoid.Move, humanoid, Vector3.zero, false)
-                return evidence
-            end
+            task.wait(0.07)
         end
 
         return progressionEvidence(beforeRound, beforeRegion)
@@ -216,8 +257,12 @@ return function(D)
         local character = D.LocalPlayer and D.LocalPlayer.Character
         local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 
-        if not root or not humanoid or humanoid.Health <= 0
-            or not row or not row.Root or not row.Root.Parent
+        if not root
+            or not humanoid
+            or humanoid.Health <= 0
+            or not row
+            or not row.Root
+            or not row.Root.Parent
         then
             return false, "LOCAL_PORTAL_INVALID"
         end
@@ -226,61 +271,89 @@ return function(D)
             return false, "LOCAL_PORTAL_TOO_FAR"
         end
 
+        local portal = row.Root
         local beforeRound = gameRound()
-        local beforeRegion = oldRegion
+        local beforeRegion = oldRegion or getRegion()
+        local axis = portalAxis(portal)
 
-        if not beforeRegion and type(D.getCurrentRegion) == "function" then
-            local ok, value = pcall(D.getCurrentRegion)
-            if ok then
-                beforeRegion = value
-            end
-        end
+        local toPlayer = horizontalUnit(
+            root.Position - portal.Position,
+            -axis
+        )
+
+        local side = toPlayer:Dot(axis) >= 0 and 1 or -1
+        local approachAxis = axis * side
 
         emit(
             "WATCHDOG_LOCAL_PORTAL_START",
             "name=" .. tostring(row.ParentName)
                 .. " round=" .. tostring(row.RoundNum)
                 .. " dist=" .. string.format("%.1f", row.Distance)
-                .. " pos=" .. tostring(row.Root.Position)
+                .. " pos=" .. tostring(portal.Position)
         )
 
-        local axis = thinAxis(row.Root)
-        if axis.Magnitude < 0.1 then
-            axis = Vector3.new(0, 0, 1)
-        else
-            axis = axis.Unit
+        -- Fast farming optimization: if the exact portal is local but not
+        -- immediately near, snap only to a safe point BEFORE the portal.
+        -- Never CFrame through it and never use a far replicated portal.
+        if row.Distance > FAST_APPROACH_DISTANCE then
+            local pre = portal.Position + approachAxis * PRE_PORTAL_DISTANCE
+
+            root.CFrame = CFrame.lookAt(
+                Vector3.new(pre.X, root.Position.Y, pre.Z),
+                Vector3.new(portal.Position.X, root.Position.Y, portal.Position.Z)
+            )
+
+            pcall(function()
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end)
+
+            task.wait(0.06)
         end
 
-        local delta = root.Position - row.Root.Position
-        local side = delta:Dot(axis) >= 0 and 1 or -1
-        local halfThin = math.min(row.Root.Size.X, row.Root.Size.Z) * 0.5
+        local evidence = progressionEvidence(beforeRound, beforeRegion)
 
-        -- First enter the real portal volume using normal Humanoid movement.
-        local evidence = walkFor(
-            humanoid,
-            row.Root.Position,
-            os.clock() + 2.2,
-            beforeRound,
-            beforeRegion
-        )
-
+        -- Native move INTO the exact portal volume.
         if not evidence then
-            -- Then cross completely through the portal along its thin axis.
-            local beyond = row.Root.Position - axis * side * (halfThin + 7)
-            evidence = walkFor(
+            evidence = nativeWalk(
                 humanoid,
-                beyond,
-                os.clock() + 2.2,
+                Vector3.new(portal.Position.X, root.Position.Y, portal.Position.Z),
+                ENTER_TIMEOUT,
                 beforeRound,
                 beforeRegion
             )
         end
 
-        -- Allow streamed objective/region state a short moment to settle.
+        -- Exact touch helper is allowed only on this verified local current-1
+        -- portal. No RF InvokeServer is used because that was proven to skip
+        -- valid intermediate rooms on some maps.
         if not evidence then
-            local settleDeadline = os.clock() + 0.8
-            while os.clock() < settleDeadline do
-                task.wait(0.08)
+            exactTouch(getRoot(), portal)
+            task.wait(0.07)
+            evidence = progressionEvidence(beforeRound, beforeRegion)
+        end
+
+        -- Cross completely through the portal along its thin axis using
+        -- Humanoid movement, keeping the game's native touch callbacks alive.
+        if not evidence then
+            local halfThin = math.min(portal.Size.X, portal.Size.Z) * 0.5
+            local beyond = portal.Position - approachAxis * (halfThin + 7)
+
+            evidence = nativeWalk(
+                humanoid,
+                Vector3.new(beyond.X, root.Position.Y, beyond.Z),
+                CROSS_TIMEOUT,
+                beforeRound,
+                beforeRegion
+            )
+        end
+
+        if not evidence then
+            exactTouch(getRoot(), portal)
+
+            local deadline = os.clock() + VERIFY_TIMEOUT
+            while os.clock() < deadline do
+                task.wait(0.07)
                 evidence = progressionEvidence(beforeRound, beforeRegion)
                 if evidence then
                     break
@@ -304,6 +377,11 @@ return function(D)
             "WATCHDOG_LOCAL_PORTAL_FAIL",
             "name=" .. tostring(row.ParentName)
                 .. " round=" .. tostring(row.RoundNum)
+                .. " finalDist="
+                .. tostring(
+                    getRoot()
+                    and (getRoot().Position - portal.Position).Magnitude
+                )
         )
 
         return false, "LOCAL_PORTAL_NO_PROGRESSION"
@@ -334,8 +412,8 @@ return function(D)
                 end
             end
 
-            -- A legitimate local current-1 portal exists. Never abandon it to
-            -- snap toward a different far replicated copy in this recovery.
+            -- A legitimate local current-1 portal exists. Do not abandon it
+            -- for a far duplicate or historical learned route.
             return false, "LOCAL_CURRENT_PORTAL_UNRESOLVED"
         end
 
@@ -351,6 +429,14 @@ return function(D)
             return false, "ONLY_FAR_CURRENT_PORTALS"
         end
 
+        -- World2 has different progression objects. Never delegate it to the
+        -- old World1 learned/far-route recovery when no exact current portal
+        -- exists; objective_probe owns evidence-backed physical blockers.
+        if worldId() == "World2" then
+            return false, "WORLD2_NO_SAFE_LOCAL_PORTAL"
+        end
+
+        -- Preserve previously validated World1 recovery behavior.
         if type(old.Recover) == "function" then
             return old:Recover(oldRegion, reason)
         end
@@ -371,8 +457,6 @@ return function(D)
             end
         end
 
-        -- Treat a legitimate local current-1 portal as an immediately usable
-        -- safe recovery route, even if it has never been learned before.
         if nearestLocal then
             return true,
                 "LOCAL_CURRENT_PORTAL",
@@ -385,6 +469,10 @@ return function(D)
                 "ONLY_FAR_CURRENT_PORTALS",
                 nearestFar.ParentName,
                 nearestFar.Distance
+        end
+
+        if worldId() == "World2" then
+            return false, "WORLD2_NO_SAFE_LOCAL_PORTAL"
         end
 
         if type(old.HasLearnedRoute) == "function" then
