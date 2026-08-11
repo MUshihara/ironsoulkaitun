@@ -1,9 +1,12 @@
 --========================================================--
--- IRON SOUL - WORLD1 TWEEN WATCHDOG WRAPPER V61.14.3
+-- IRON SOUL - WORLD1 TWEEN WATCHDOG WRAPPER V61.14.5
 --
 -- Reuses the proven watchdog but intercepts World1 exact current-1 portals
 -- before any native Humanoid walking path. World1 uses fast floating CFrame
 -- tween movement + a short pre-cross settle + touch + authoritative verify.
+-- Before portal recovery, it also asks world1_round_recovery.lua to route the
+-- character to the wake matching authoritative GameRound. This repairs a
+-- proven D3 failure where a reused portal sent GameRound5 into Round7 early.
 -- World2 stays isolated.
 --========================================================--
 
@@ -11,17 +14,17 @@ local baseLoadRaw =
     getgenv().IronSoulDependencyBaseLoadRaw
     or getgenv().IronSoulLoadRaw
 
-assert(type(baseLoadRaw) == "function", "V61.14.3 watchdog base loader unavailable")
+assert(type(baseLoadRaw) == "function", "V61.14.5 watchdog base loader unavailable")
 
 local ok, baseFactory = baseLoadRaw("systems/transition_watchdog.lua")
-assert(ok and type(baseFactory) == "function", "V61.14.3 base watchdog unavailable")
+assert(ok and type(baseFactory) == "function", "V61.14.5 base watchdog unavailable")
 
 local motionOk, Motion = baseLoadRaw("systems/world1_motion.lua")
-assert(motionOk and type(Motion) == "table", "V61.14.3 World1 motion unavailable")
+assert(motionOk and type(Motion) == "table", "V61.14.5 World1 motion unavailable")
 
 return function(D)
     local W = baseFactory(D)
-    assert(type(W) == "table", "V61.14.3 base watchdog build failed")
+    assert(type(W) == "table", "V61.14.5 base watchdog build failed")
 
     local baseRecover = W.Recover
 
@@ -142,6 +145,8 @@ return function(D)
                 and newRegion ~= beforeRegion
                 and tonumber(distance)
                 and tonumber(distance) <= 28
+                and tostring(newRegion.Name)
+                    == "Round" .. tostring(round())
             then
                 return "NEW_REGION"
             end
@@ -298,6 +303,24 @@ return function(D)
     function W:Recover(oldRegion, reason)
         if worldId() ~= "World1" then
             return baseRecover(self, oldRegion, reason)
+        end
+
+        -- First repair any cross-section mismatch by following the exact wake
+        -- matching authoritative GameRound. This also handles a portal that
+        -- physically misplaced us into a future boss section.
+        if getgenv().IronSoulWorld1RoundRecovery
+            and getgenv().IronSoulWorld1RoundRecovery:
+                RecoverIfNeeded(
+                    oldRegion,
+                    "WATCHDOG:" .. tostring(reason)
+                )
+        then
+            emit(
+                "WATCHDOG_CURRENT_ROUND_ROUTE_SUCCESS",
+                "round=" .. tostring(round())
+                    .. " reason=" .. tostring(reason)
+            )
+            return true, "WATCHDOG_CURRENT_ROUND_TWEEN"
         end
 
         local rows = currentPortalRows()
