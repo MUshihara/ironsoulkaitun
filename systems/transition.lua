@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - ROUTE-GUIDED TRANSITION MODULE V61.2
+-- IRON SOUL - FAST VERIFIED PORTAL TRANSITION V61.4
 --
 -- Factory module used by systems/combat.lua.
 --
@@ -588,8 +588,18 @@ return function(D)
                     )
             )
 
-        -- Only physically guide toward a portal whose server condition is
-        -- already satisfied. Never walk toward a future locked portal.
+        -- High-confidence route rule:
+        -- for fast movement the exact portal must belong to the round that
+        -- just completed. This avoids snapping to stale older replicated
+        -- portals.
+        if roundNum
+            and current
+            and roundNum
+                ~= current - 1
+        then
+            return nil
+        end
+
         if roundNum
             and current
             and roundNum >= current
@@ -656,6 +666,294 @@ return function(D)
                 target.Position
                 - root.Position
             ).Magnitude
+
+        --======================================================--
+        -- V61.4 FAST VERIFIED PORTAL APPROACH
+        --
+        -- We already know:
+        --   * no combat objective is active (caller gating)
+        --   * target is exact RoundDoor.Portal
+        --   * target.RoundNum == GameRound - 1
+        --
+        -- So long walking adds no safety. Move instantly to a safe point
+        -- just before the portal, then use real Humanoid movement through
+        -- the final ~20 studs so touch/movement callbacks still fire.
+        --======================================================--
+        if CFG.FAST_PORTAL_APPROACH
+            and startDistance
+                >= CFG.FAST_PORTAL_MIN_DISTANCE
+            and startDistance
+                <= CFG.FAST_PORTAL_MAX_DISTANCE
+        then
+            local objectiveActive =
+                false
+
+            if type(hasCombatObjective)
+                == "function"
+            then
+                local ok, value =
+                    pcall(
+                        hasCombatObjective
+                    )
+
+                objectiveActive =
+                    ok
+                    and value == true
+            end
+
+            if not objectiveActive then
+                local fromPortal =
+                    root.Position
+                    - target.Position
+
+                fromPortal =
+                    Vector3.new(
+                        fromPortal.X,
+                        0,
+                        fromPortal.Z
+                    )
+
+                if fromPortal.Magnitude < 0.1 then
+                    fromPortal =
+                        -Vector3.new(
+                            target.CFrame.LookVector.X,
+                            0,
+                            target.CFrame.LookVector.Z
+                        )
+                end
+
+                if fromPortal.Magnitude < 0.1 then
+                    fromPortal =
+                        Vector3.new(
+                            0,
+                            0,
+                            1
+                        )
+                else
+                    fromPortal =
+                        fromPortal.Unit
+                end
+
+                local prePos =
+                    Vector3.new(
+                        target.Position.X
+                            + fromPortal.X
+                                * CFG.FAST_PORTAL_PRE_DISTANCE,
+                        target.Position.Y + 2.0,
+                        target.Position.Z
+                            + fromPortal.Z
+                                * CFG.FAST_PORTAL_PRE_DISTANCE
+                    )
+
+                emit(
+                    "FAST_PORTAL_START",
+                    "reason="
+                        .. tostring(reason)
+                        .. " round="
+                        .. tostring(
+                            target:
+                                GetAttribute(
+                                    "RoundNum"
+                                )
+                        )
+                        .. " distance="
+                        .. string.format(
+                            "%.1f",
+                            startDistance
+                        )
+                        .. " pre="
+                        .. tostring(
+                            prePos
+                        )
+                        .. " portal="
+                        .. tostring(
+                            target.Position
+                        )
+                )
+
+                -- Fast long-distance approach. We intentionally do NOT
+                -- CFrame through the portal itself.
+                root.CFrame =
+                    CFrame.lookAt(
+                        prePos,
+                        target.Position
+                    )
+
+                pcall(function()
+                    root.AssemblyLinearVelocity =
+                        Vector3.zero
+
+                    root.AssemblyAngularVelocity =
+                        Vector3.zero
+                end)
+
+                task.wait(
+                    CFG.FAST_PORTAL_SETTLE
+                )
+
+                -- Establish evidence baseline AFTER the snap, otherwise the
+                -- snap itself could look like portal teleport evidence.
+                local verifyFrom =
+                    root.Position
+
+                local crossDestination =
+                    target.Position
+                    - fromPortal
+                        * CFG.FAST_PORTAL_CROSS_DISTANCE
+
+                local verifyStarted =
+                    os.clock()
+
+                while os.clock()
+                    - verifyStarted
+                    < CFG.FAST_PORTAL_VERIFY
+                do
+                    if not root.Parent
+                        or humanoid.Health <= 0
+                    then
+                        return true,
+                            "CHARACTER_CHANGED"
+                    end
+
+                    if type(hasCombatObjective)
+                        == "function"
+                    then
+                        local ok, objective =
+                            pcall(
+                                hasCombatObjective
+                            )
+
+                        if ok
+                            and objective
+                        then
+                            humanoid:
+                                Move(
+                                    Vector3.zero,
+                                    false
+                                )
+
+                            emit(
+                                "FAST_PORTAL_OBJECTIVE",
+                                "reason="
+                                    .. tostring(reason)
+                            )
+
+                            return true,
+                                "OBJECTIVE_APPEARED"
+                        end
+                    end
+
+                    pcall(
+                        humanoid.MoveTo,
+                        humanoid,
+                        crossDestination
+                    )
+
+                    if type(
+                        firetouchinterest
+                    ) == "function"
+                    then
+                        pcall(
+                            firetouchinterest,
+                            root,
+                            target,
+                            0
+                        )
+
+                        task.wait(0.025)
+
+                        pcall(
+                            firetouchinterest,
+                            root,
+                            target,
+                            1
+                        )
+                    end
+
+                    task.wait(0.07)
+
+                    local evidence =
+                        transitionEvidence(
+                            verifyFrom,
+                            nil,
+                            false
+                        )
+
+                    if evidence then
+                        humanoid:
+                            Move(
+                                Vector3.zero,
+                                false
+                            )
+
+                        emit(
+                            "FAST_PORTAL_SUCCESS",
+                            "reason="
+                                .. tostring(reason)
+                                .. " result="
+                                .. tostring(
+                                    evidence
+                                )
+                                .. " pos="
+                                .. tostring(
+                                    root.Position
+                                )
+                        )
+
+                        return true,
+                            "FAST_"
+                                .. tostring(
+                                    evidence
+                                )
+                    end
+
+                    if beforeRound
+                        and gameRound()
+                        and gameRound()
+                            ~= beforeRound
+                    then
+                        emit(
+                            "FAST_PORTAL_ROUND",
+                            tostring(
+                                beforeRound
+                            )
+                                .. "->"
+                                .. tostring(
+                                    gameRound()
+                                )
+                        )
+
+                        return true,
+                            "GAME_ROUND_CHANGED"
+                    end
+                end
+
+                emit(
+                    "FAST_PORTAL_NO_TRIGGER",
+                    "reason="
+                        .. tostring(reason)
+                        .. " distanceNow="
+                        .. string.format(
+                            "%.1f",
+                            (
+                                target.Position
+                                - root.Position
+                            ).Magnitude
+                        )
+                )
+
+                -- If final touch did not trigger, fall through to the existing
+                -- real GuidedWalk logic from this much closer position.
+                beforePos =
+                    root.Position
+
+                startDistance =
+                    (
+                        target.Position
+                        - root.Position
+                    ).Magnitude
+            end
+        end
 
         local bestDistance =
             startDistance
