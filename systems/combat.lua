@@ -1,16 +1,26 @@
--- IRON SOUL - V61.15 COMBAT ENTRY
+-- IRON SOUL - V61.16 COMBAT ENTRY
 --
--- Preserve the validated combat chain. World1 transition movement is smooth
--- fast CFrame tween/floating movement: no Humanoid walking to/through gates
--- or portals. Empty traversal may follow a FAR gate only when it is the exact
--- current-1 gate, bounded to 650 studs. Already-open gates cross the full
--- proven checkpoint depth and require authoritative progression evidence.
--- D3 cross-section recovery follows server-current round state; V61.15 also
--- preloads a place-aware live route mapper that learns wakes/doors/portals and
--- can probe beyond the last valid open gate when the next round has not streamed.
--- Settlement replay fails fast to Lobby when maintenance/replay is blocked.
--- IMPORTANT: avoid adding locals to the historical combat chunk; it is already
--- at Luau's local-register ceiling. World2 remains active-discovery-only/frozen.
+-- World1 V61.15 remains frozen/stable. Validated Cave PlaceIds redirect once
+-- through systems/cave.lua, which owns one-run Cave settlement/ticket policy
+-- while reusing this proven combat body internally. World2 remains frozen.
+
+if not getgenv().IronSoulInsideCaveCombat
+    and (
+        game.PlaceId == 91584731222940
+        or game.PlaceId == 119524374829397
+        or game.PlaceId == 132445869992129
+    )
+then
+    local caveLoader = getgenv().IronSoulLoadRaw
+    assert(type(caveLoader) == "function", "V61.16 Cave loader unavailable")
+
+    local caveOk, caveResult = caveLoader("systems/cave.lua")
+    if not caveOk then
+        error(caveResult)
+    end
+
+    return caveResult
+end
 
 local originalLoadRaw = getgenv().IronSoulLoadRaw
 
@@ -33,7 +43,7 @@ local function getPatcher()
     assert(fn, err)
 
     local patcher = fn()
-    assert(type(patcher) == "function", "V61.15 combat patch loader unavailable")
+    assert(type(patcher) == "function", "V61.16 combat patch loader unavailable")
     return patcher
 end
 
