@@ -1,7 +1,7 @@
--- IRON SOUL - V61.10 COMBAT ENTRY
+-- IRON SOUL - V61.11.1 COMBAT ENTRY
 -- Preserves V61.7/V61.8 boss safety, skill telemetry and learned routes,
--- V61.9 unknown-objective recovery, then fixes early-scope objective checks
--- and mirrors important dungeon state to the mobile status HUD.
+-- V61.9 unknown-objective recovery, V61.10 scope hardening, then fixes the
+-- World2 false DragonEgg blocker using the real region-aware egg resolver.
 
 local function getPatcher()
     local loadRaw =
@@ -34,7 +34,7 @@ local function getPatcher()
     local patcher = fn()
     assert(
         type(patcher) == "function",
-        "V61.10 combat patch loader unavailable"
+        "V61.11.1 combat patch loader unavailable"
     )
 
     return patcher
@@ -51,5 +51,6 @@ return getPatcher()({
         "systems/patches/combat_v61_8_learned_transition.patch",
         "systems/patches/combat_v61_9_unknown_objective.patch",
         "systems/patches/combat_v61_10_objective_scope_hotfix.patch",
+        "systems/patches/combat_v61_11_1_region_egg_bridge.patch",
     },
 })
