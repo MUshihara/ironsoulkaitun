@@ -1,10 +1,11 @@
 --========================================================--
--- IRON SOUL - WORLD1 TWEEN TRANSITION WRAPPER V61.14
+-- IRON SOUL - WORLD1 TWEEN TRANSITION WRAPPER V61.14.3
 --
 -- User-required movement style:
 --   * NO Humanoid walking / MoveTo for World1 transitions.
 --   * Smooth fast CFrame tween/floating movement instead of hard snaps.
 --   * Exact current-1 portal only.
+--   * Settle ~0.60s before final portal touch/cross so server trigger can arm.
 --   * Exact touch/handshake + authoritative progression verification.
 --   * Never generic RoundPortal RF.
 --========================================================--
@@ -13,17 +14,17 @@ local baseLoadRaw =
     getgenv().IronSoulDependencyBaseLoadRaw
     or getgenv().IronSoulLoadRaw
 
-assert(type(baseLoadRaw) == "function", "V61.14 base loader unavailable")
+assert(type(baseLoadRaw) == "function", "V61.14.3 base loader unavailable")
 
 local ok, baseFactory = baseLoadRaw("systems/transition.lua")
-assert(ok and type(baseFactory) == "function", "V61.14 base transition unavailable")
+assert(ok and type(baseFactory) == "function", "V61.14.3 base transition unavailable")
 
 local motionOk, Motion = baseLoadRaw("systems/world1_motion.lua")
-assert(motionOk and type(Motion) == "table", "V61.14 World1 motion unavailable")
+assert(motionOk and type(Motion) == "table", "V61.14.3 World1 motion unavailable")
 
 return function(D)
     local R = baseFactory(D)
-    assert(type(R) == "table", "V61.14 base transition build failed")
+    assert(type(R) == "table", "V61.14.3 base transition build failed")
 
     local basePulse = R.PulseNativeMovement
     local baseGuided = R.GuidedWalk
@@ -168,6 +169,17 @@ return function(D)
         return h.Unit
     end
 
+    local function portalSettleDelay()
+        local requested =
+            D.CFG
+            and tonumber(D.CFG.FAST_PORTAL_SETTLE)
+            or 0.60
+
+        -- User explicitly prefers a short dwell so the portal is armed before
+        -- the final cross. Never let an older 0.12 config make this too fast.
+        return math.min(1.0, math.max(0.60, requested or 0.60))
+    end
+
     local function tweenPortal(oldRegion, reason)
         if hasObjective() then
             return false, "OBJECTIVE_ACTIVE"
@@ -189,8 +201,6 @@ return function(D)
             -portal.CFrame.LookVector
         )
 
-        -- Keep the same proven portal geometry: about 10 studs before and
-        -- 12-14 studs through. Only the visual movement style changes.
         local preDistance =
             D.CFG
             and tonumber(D.CFG.FAST_PORTAL_PRE_DISTANCE)
@@ -252,6 +262,26 @@ return function(D)
             return true, "TWEEN_" .. tostring(early)
         end
 
+        local settle = portalSettleDelay()
+
+        emit(
+            "TWEEN_PORTAL_SETTLE",
+            "seconds=" .. string.format("%.2f", settle)
+                .. " dist=" .. string.format("%.1f", (portal.Position - root.Position).Magnitude)
+        )
+
+        task.wait(settle)
+
+        if not root.Parent or not portal.Parent then
+            return false, "PORTAL_CHANGED_DURING_SETTLE"
+        end
+
+        local afterSettle = progressionEvidence(beforeRound, oldRegion, verifyFrom)
+        if afterSettle then
+            emit("TWEEN_PORTAL_SUCCESS", "phase=settle result=" .. tostring(afterSettle))
+            return true, "TWEEN_" .. tostring(afterSettle)
+        end
+
         exactTouch(root, portal)
 
         local beyond = Vector3.new(
@@ -272,7 +302,7 @@ return function(D)
 
         exactTouch(root, portal)
 
-        local deadline = os.clock() + 1.15
+        local deadline = os.clock() + 1.25
         while os.clock() < deadline do
             task.wait(0.06)
 
@@ -287,8 +317,6 @@ return function(D)
             end
         end
 
-        -- If the game needs an exact touch frame, glide through a few tiny
-        -- points inside the portal. Still no Humanoid movement/walking.
         for _, offset in ipairs({-2.0, 0.0, 2.0, -4.0, 4.0}) do
             if not portal.Parent or not root.Parent then
                 break
