@@ -178,52 +178,60 @@
                  players
              )
  
-@@ -9320,6 +9396,45 @@
+@@ -9320,6 +9396,48 @@
      return
  end
  
-+-- Fast 24/7 maintenance exit. Keep all temporary values in a nested scope so
-+-- this already-large top-level chunk does not retain extra Luau registers.
-+do
-+    local fastBagFull,
-+        fastBagReason =
-+            dungeonBagFullStatus()
++-- Fast 24/7 maintenance exit. IMPORTANT: this section deliberately creates
++-- ZERO new top-level locals because combat.lua is already at Luau's local
++-- register ceiling. Scratch values live briefly in getgenv() instead.
++getgenv().IronSoulFastSettlementScratch =
++    {
++        dungeonBagFullStatus()
++    }
 +
-+    local fastInventory =
-+        inventoryCountNow()
++getgenv().IronSoulFastSettlementScratch.Inventory =
++    inventoryCountNow()
 +
-+    if fastBagFull
-+        or fastInventory
-+            >= INVENTORY_CLEAN_AT
-+    then
-+        important(
-+            "Maintenance | immediate Lobby | "
-+                .. tostring(
-+                    fastBagFull
-+                    and fastBagReason
-+                    or "INVENTORY_HIGH"
-+                )
++if getgenv().IronSoulFastSettlementScratch[1]
++    or getgenv().IronSoulFastSettlementScratch.Inventory
++        >= INVENTORY_CLEAN_AT
++then
++    important(
++        "Maintenance | immediate Lobby | "
++            .. tostring(
++                getgenv().IronSoulFastSettlementScratch[1]
++                and getgenv().IronSoulFastSettlementScratch[2]
++                or "INVENTORY_HIGH"
++            )
++    )
++
++    writeJournal({
++        State = "FAST_MAINTENANCE",
++        Decision = "LOBBY_MAINTENANCE",
++        World = journal.World or "?",
++        Diff = journal.Diff or "?",
++        DirectRepeats = 0,
++        FailureCount = journal.FailureCount or 0,
++        UpdatedAt = os.time(),
++    })
++
++    directLobby(
++        getgenv().IronSoulFastSettlementScratch[1]
++        and (
++            "BAG_FULL_"
++            .. tostring(
++                getgenv().IronSoulFastSettlementScratch[2]
++            )
 +        )
++        or "INVENTORY_HIGH"
++    )
 +
-+        writeJournal({
-+            State = "FAST_MAINTENANCE",
-+            Decision = "LOBBY_MAINTENANCE",
-+            World = journal.World or "?",
-+            Diff = journal.Diff or "?",
-+            DirectRepeats = 0,
-+            FailureCount = journal.FailureCount or 0,
-+            UpdatedAt = os.time(),
-+        })
-+
-+        directLobby(
-+            fastBagFull
-+            and ("BAG_FULL_" .. tostring(fastBagReason))
-+            or "INVENTORY_HIGH"
-+        )
-+
-+        return
-+    end
++    getgenv().IronSoulFastSettlementScratch = nil
++    return
 +end
++
++getgenv().IronSoulFastSettlementScratch = nil
 +
  -- Let settlement rewards / clear state replicate.
  task.wait(1.25)
