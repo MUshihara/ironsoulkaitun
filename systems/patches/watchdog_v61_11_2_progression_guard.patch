@@ -1,8 +1,8 @@
 --- a/systems/transition_watchdog.lua
 +++ b/systems/transition_watchdog.lua
-@@ -49,6 +49,18 @@
-     local LastAttempt =
-         -math.huge
+@@ -52,6 +52,18 @@
+     local AttemptCount =
+         0
  
 +    -- Recovery is intentionally LOCAL. A replicated current-1 portal can be
 +    -- thousands of studs away or belong to another branch/section. CFraming
@@ -11,15 +11,34 @@
 +    local MAX_RECOVERY_PORTAL_DISTANCE =
 +        220
 +
-+    -- Historical V61.5 learning could store PORTAL_MOVED, which only meant
-+    -- the character displaced >100 studs. That is not progression proof.
++    -- Historical watchdog learning could store displacement-only success.
++    -- Those records are unsafe and must never be replayed or advertised as
++    -- proven routes.
 +    local INVALID_LEARNED_RESULTS = {
 +        PORTAL_MOVED = true,
 +        CHARACTER_CHANGED = true,
 +    }
 +
      local Learn = {}
-@@ -304,14 +316,6 @@
+@@ -288,6 +300,17 @@
+ 
+             return
+         end
++
++        if INVALID_LEARNED_RESULTS[
++            tostring(result)
++        ] then
++            emit(
++                "WATCHDOG_LEARN_SKIP",
++                "kind=" .. tostring(kind)
++                    .. " unsafeResult=" .. tostring(result)
++            )
++            return
++        end
+ 
+         local key =
+             routeKey(round)
+@@ -325,14 +348,6 @@
              return "GAME_ROUND_CHANGED"
          end
  
@@ -34,7 +53,7 @@
          local region,
              dist =
                  D.nearestWakeRegion(
-@@ -387,6 +391,10 @@
+@@ -408,6 +423,10 @@
                      )
  
                  if roundNum
@@ -46,7 +65,7 @@
                      and (
                          rf
                          or localPortal
-@@ -776,6 +784,14 @@
+@@ -825,6 +844,14 @@
              return false
          end
  
@@ -60,14 +79,13 @@
 +
          local beforeRound =
              D.gameRound()
-@@ -987,6 +1003,18 @@
+@@ -1041,6 +1068,18 @@
              return false
          end
  
 +        -- Never replay routes learned from displacement-only evidence. Those
-+        -- entries may still exist in the user's persistent learn file from
-+        -- older versions, so reject them at use-time instead of trusting
-+        -- historical success counters.
++        -- entries can still exist in the persistent learning file from older
++        -- builds, so reject them at use-time.
 +        if INVALID_LEARNED_RESULTS[
 +            tostring(learned.result)
 +        ] then
@@ -81,3 +99,19 @@
          local source =
              tableV3(
                  learned.source
+@@ -1279,6 +1318,17 @@
+             return false,
+                 "NO_LEARNED_ROUTE"
+         end
++
++        if INVALID_LEARNED_RESULTS[
++            tostring(learned.result)
++        ] then
++            return false,
++                "UNSAFE_LEARNED_RESULT",
++                learned.kind,
++                learned.result
++        end
+ 
+         local source =
+             tableV3(
