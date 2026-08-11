@@ -1,7 +1,6 @@
--- IRON SOUL - V61.8 COMBAT ENTRY
--- Applies V61.7 boss-safe tuning, V61.8 burst-safe positioning values,
--- lightweight skill-cast telemetry, learned-route fast-path recovery, and
--- authoritative settlement finalization to the immutable V61.6 combat source.
+-- IRON SOUL - V61.9 COMBAT ENTRY
+-- Preserves V61.7/V61.8 boss safety, skill telemetry and learned routes,
+-- then adds evidence-driven unknown/destroyable objective recovery.
 
 local function getPatcher()
     local loadRaw =
@@ -34,7 +33,7 @@ local function getPatcher()
     local patcher = fn()
     assert(
         type(patcher) == "function",
-        "V61.8 patch loader unavailable"
+        "V61.9 combat patch loader unavailable"
     )
 
     return patcher
@@ -49,5 +48,6 @@ return getPatcher()({
         "systems/patches/combat_v61_8_burst_safe.patch",
         "systems/patches/combat_v61_8_skill_telemetry.patch",
         "systems/patches/combat_v61_8_learned_transition.patch",
+        "systems/patches/combat_v61_9_unknown_objective.patch",
     },
 })
