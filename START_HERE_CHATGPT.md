@@ -1,13 +1,22 @@
-# Start Here - Iron Soul Kaitun
+# Iron Soul Kaitun — START HERE
 
-For any new ChatGPT conversation working on this project:
+Read this file, then `IRONSOUL_PROJECT_MEMORY.md`, then inspect the current repo.
+Do **not** read the long changelog by default; use it only to trace an old regression.
 
-1. Read `IRONSOUL_PROJECT_MEMORY.md` completely.
-2. Read `IRONSOUL_CHANGELOG.md` completely.
-3. Inspect the current production entry files (`bootstrap.lua`, active versioned bootstrap, `systems/lobby.lua`, `systems/combat.lua`, `systems/tutorial_v61_11.lua`).
-4. Treat the repository state as newer than older chat memories when they conflict.
-5. Preserve validated behavior unless new telemetry/recon proves a change is needed.
-6. Temporary diagnostics must be supplied as standalone raw scripts in chat, not committed to GitHub, unless the user explicitly changes that preference.
-7. After every meaningful production change, update both persistent memory/changelog files with evidence, cause, change, and next verification.
+## Non-negotiable engineering rules
+- **Headless/API-first:** remotes/modules/server state first. No mouse/GUI clicking in normal automation.
+- Fast farming is good only when **server progression stays valid**.
+- **Enemies/DragonEgg always outrank destructibles.**
+- Never attack scenery because it has `HitCount` or `DestructibleObject`.
+- Unknown destructible may be attacked only when it is the **first physical blocker on the route to the authoritative current portal/wake region**.
+- `OBJECT_REMOVED`, large movement, or CFrame displacement are **not progression proof**.
+- Progression truth = GameRound / settlement / new valid objective / new valid region.
+- Never chase a replicated portal across the map.
+- Never force RoundPortal RF just because it exists: this was proven able to skip rooms/state.
+- Exact local portal: safe pre-position + native/touch handshake + progression verification.
+- Preserve validated World1 combat/forge/door logic; isolate World2 experiments.
+- Temporary diagnostics are standalone `.txt` scripts in chat, not GitHub.
+- Recovery/diagnostic helpers must fail closed and must not kill combat.
 
-Current continuity date: 2026-08-11.
+## Current focus
+World2 D1 (`136216144170036`) progression. Current repository is source of truth.
