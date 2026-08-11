@@ -72,7 +72,29 @@
  
      local oldRound =
          gameRound()
-@@ -8934,7 +8964,7 @@
+@@ -8899,6 +8929,24 @@
+     if players <= 0 then
+         players = 1
+     end
+ 
++    local function replayVoteFull()
++        local votes =
++            num(
++                GameRoundCfg:
++                    GetAttribute(
++                        "VotedAgainCount"
++                    )
++            )
++
++        return players > 0
++            and votes >= players,
++            votes
++    end
++
+     local remotes =
+         ReplicatedStorage:
+             FindFirstChild(
+@@ -8934,7 +8982,7 @@
                      )
                  end,
                  oldRound,
@@ -81,7 +103,29 @@
                  players
              )
  
-@@ -8969,7 +8999,7 @@
+@@ -8944,6 +8992,20 @@
+                 "PLAY_AGAIN_ALONE_SIGNAL"
+         end
++
++        local voteFull,
++            votes =
++                replayVoteFull()
++
++        if voteFull then
++            important(
++                "Replay | vote full but restart did not begin, returning Lobby"
++            )
++
++            return false,
++                "REPLAY_VOTE_FULL_STUCK_"
++                .. tostring(votes)
++                .. "_OF_"
++                .. tostring(players)
++        end
+     end
+ 
+     -- ========================================================
+@@ -8969,7 +9031,7 @@
                          )
                  end,
                  oldRound,
@@ -90,16 +134,33 @@
                  players
              )
  
-@@ -8981,7 +9011,7 @@
+@@ -8979,9 +9041,23 @@
+                 "PLAY_AGAIN_ALONE_REMOTE"
          end
  
++        local voteFull,
++            votes =
++                replayVoteFull()
++
++        if voteFull then
++            important(
++                "Replay | native vote full/stuck, returning Lobby"
++            )
++
++            return false,
++                "REPLAY_VOTE_FULL_STUCK_"
++                .. tostring(votes)
++                .. "_OF_"
++                .. tostring(players)
++        end
++
          -- Retry the independent route once, after a short server cooldown.
 -        task.wait(0.8)
 +        task.wait(0.15)
  
          ok =
              runReplayRoute(
-@@ -8996,7 +9026,7 @@
+@@ -8996,7 +9072,7 @@
                          )
                  end,
                  oldRound,
@@ -108,7 +169,7 @@
                  players
              )
  
-@@ -9028,7 +9058,7 @@
+@@ -9028,7 +9104,7 @@
                          )
                  end,
                  oldRound,
@@ -117,7 +178,7 @@
                  players
              )
  
-@@ -9320,6 +9350,43 @@
+@@ -9320,6 +9396,43 @@
      return
  end
  
