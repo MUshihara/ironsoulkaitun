@@ -1,11 +1,13 @@
--- IRON SOUL - V61.14.3 COMBAT ENTRY
+-- IRON SOUL - V61.14.4 COMBAT ENTRY
 --
 -- Preserve the validated combat chain. World1 transition movement is smooth
 -- fast CFrame tween/floating movement: no Humanoid walking to/through gates
 -- or portals. Empty traversal may follow a FAR gate only when it is the exact
 -- current-1 gate, bounded to 650 studs. Already-open gates cross the full
 -- proven checkpoint depth and require authoritative progression evidence.
--- Settlement replay now fails fast to Lobby when maintenance/replay is blocked.
+-- Settlement replay fails fast to Lobby when maintenance/replay is blocked.
+-- IMPORTANT: fast-settlement patch adds zero new combat.lua locals because the
+-- historical combat chunk is already at Luau's local-register ceiling.
 -- World2 remains isolated/frozen.
 
 local originalLoadRaw = getgenv().IronSoulLoadRaw
@@ -29,7 +31,7 @@ local function getPatcher()
     assert(fn, err)
 
     local patcher = fn()
-    assert(type(patcher) == "function", "V61.14.3 combat patch loader unavailable")
+    assert(type(patcher) == "function", "V61.14.4 combat patch loader unavailable")
     return patcher
 end
 
