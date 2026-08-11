@@ -1,22 +1,26 @@
 --========================================================--
--- IRON SOUL - WORLD1 TELEPORT-ONLY WATCHDOG WRAPPER V61.13.3
+-- IRON SOUL - WORLD1 TWEEN WATCHDOG WRAPPER V61.14
 --
 -- Reuses the proven watchdog but intercepts World1 exact current-1 portals
--- before the base watchdog can use Humanoid MoveTo. World2 remains isolated.
+-- before any native Humanoid walking path. World1 uses fast floating CFrame
+-- tween movement + touch + authoritative verification. World2 stays isolated.
 --========================================================--
 
 local baseLoadRaw =
     getgenv().IronSoulDependencyBaseLoadRaw
     or getgenv().IronSoulLoadRaw
 
-assert(type(baseLoadRaw) == "function", "V61.13.3 watchdog base loader unavailable")
+assert(type(baseLoadRaw) == "function", "V61.14 watchdog base loader unavailable")
 
 local ok, baseFactory = baseLoadRaw("systems/transition_watchdog.lua")
-assert(ok and type(baseFactory) == "function", "V61.13.3 base watchdog unavailable")
+assert(ok and type(baseFactory) == "function", "V61.14 base watchdog unavailable")
+
+local motionOk, Motion = baseLoadRaw("systems/world1_motion.lua")
+assert(motionOk and type(Motion) == "table", "V61.14 World1 motion unavailable")
 
 return function(D)
     local W = baseFactory(D)
-    assert(type(W) == "table", "V61.13.3 base watchdog build failed")
+    assert(type(W) == "table", "V61.14 base watchdog build failed")
 
     local baseRecover = W.Recover
 
@@ -43,46 +47,31 @@ return function(D)
     end
 
     local function root()
-        if type(D.getRoot) ~= "function" then
-            return nil
-        end
-
+        if type(D.getRoot) ~= "function" then return nil end
         local okRoot, value = pcall(D.getRoot)
         return okRoot and value or nil
     end
 
     local function round()
-        if type(D.gameRound) ~= "function" then
-            return nil
-        end
-
+        if type(D.gameRound) ~= "function" then return nil end
         local okRound, value = pcall(D.gameRound)
         return okRound and tonumber(value) or nil
     end
 
     local function region()
-        if type(D.getCurrentRegion) ~= "function" then
-            return nil
-        end
-
+        if type(D.getCurrentRegion) ~= "function" then return nil end
         local okRegion, value = pcall(D.getCurrentRegion)
         return okRegion and value or nil
     end
 
     local function hasObjective()
-        if type(D.hasCombatObjective) ~= "function" then
-            return false
-        end
-
+        if type(D.hasCombatObjective) ~= "function" then return false end
         local okObjective, value = pcall(D.hasCombatObjective)
         return okObjective and value == true
     end
 
     local function settled()
-        if type(D.settlementDetected) ~= "function" then
-            return false
-        end
-
+        if type(D.settlementDetected) ~= "function" then return false end
         local okSettlement, value = pcall(D.settlementDetected)
         return okSettlement and value == true
     end
@@ -93,9 +82,7 @@ return function(D)
         local folder = workspace:FindFirstChild("RoundDoor")
         local rows = {}
 
-        if not r or not current or not folder then
-            return rows
-        end
+        if not r or not current or not folder then return rows end
 
         for _, part in ipairs(folder:GetDescendants()) do
             if part:IsA("BasePart")
@@ -118,29 +105,19 @@ return function(D)
             end
         end
 
-        table.sort(rows, function(a,b)
-            return a.Distance < b.Distance
-        end)
-
+        table.sort(rows, function(a,b) return a.Distance < b.Distance end)
         return rows
     end
 
     local function horizontal(v, fallback)
         local h = Vector3.new(v.X, 0, v.Z)
-        if h.Magnitude < 0.1 then
-            h = fallback or Vector3.new(0,0,1)
-        end
-        if h.Magnitude < 0.1 then
-            h = Vector3.new(0,0,1)
-        end
+        if h.Magnitude < 0.1 then h = fallback or Vector3.new(0,0,1) end
+        if h.Magnitude < 0.1 then h = Vector3.new(0,0,1) end
         return h.Unit
     end
 
     local function exactTouch(r, portal)
-        if type(D.firetouchinterest) ~= "function" then
-            return false
-        end
-
+        if type(D.firetouchinterest) ~= "function" then return false end
         local ok0 = pcall(D.firetouchinterest, r, portal, 0)
         task.wait(0.025)
         local ok1 = pcall(D.firetouchinterest, r, portal, 1)
@@ -148,13 +125,8 @@ return function(D)
     end
 
     local function evidence(beforeRound, beforeRegion)
-        if settled() then
-            return "SETTLEMENT"
-        end
-
-        if hasObjective() then
-            return "OBJECTIVE_APPEARED"
-        end
+        if settled() then return "SETTLEMENT" end
+        if hasObjective() then return "OBJECTIVE_APPEARED" end
 
         local nowRound = round()
         if beforeRound and nowRound and nowRound ~= beforeRound then
@@ -177,93 +149,122 @@ return function(D)
         return nil
     end
 
-    local function teleportPortal(row, oldRegion, reason)
+    local function tweenPortal(row, oldRegion, reason)
         local r = root()
         if not r or not row or not row.Root or not row.Root.Parent then
             return false, "INVALID_PORTAL"
         end
-
-        if hasObjective() then
-            return false, "OBJECTIVE_ACTIVE"
-        end
+        if hasObjective() then return false, "OBJECTIVE_ACTIVE" end
 
         local portal = row.Root
         local beforeRound = round()
         local beforeRegion = oldRegion or region()
         local fromPortal = horizontal(r.Position - portal.Position, -portal.CFrame.LookVector)
+        local travelY = r.Position.Y
 
-        local pre = portal.Position + fromPortal * 8 + Vector3.new(0, 2, 0)
-        local beyond = portal.Position - fromPortal * 11 + Vector3.new(0, 2, 0)
+        local pre = Vector3.new(
+            portal.Position.X + fromPortal.X * 9,
+            travelY,
+            portal.Position.Z + fromPortal.Z * 9
+        )
+        local beyond = Vector3.new(
+            portal.Position.X - fromPortal.X * 13,
+            travelY,
+            portal.Position.Z - fromPortal.Z * 13
+        )
 
         emit(
-            "WATCHDOG_TELEPORT_PORTAL_START",
+            "WATCHDOG_TWEEN_PORTAL_START",
             "reason=" .. tostring(reason)
                 .. " name=" .. tostring(row.Name)
                 .. " round=" .. tostring(row.RoundNum)
                 .. " dist=" .. string.format("%.1f", row.Distance)
         )
 
-        r.CFrame = CFrame.lookAt(pre, portal.Position)
-        pcall(function()
-            r.AssemblyLinearVelocity = Vector3.zero
-            r.AssemblyAngularVelocity = Vector3.zero
-        end)
-        task.wait(0.05)
+        local moved, moveKind, moveDist, moveTime = Motion.MoveToPosition(
+            r,
+            pre,
+            Vector3.new(portal.Position.X, travelY, portal.Position.Z),
+            {
+                Speed = row.Distance > 80 and Motion.FAR_SPEED or Motion.DEFAULT_SPEED,
+                MaxTime = 0.90,
+            }
+        )
 
-        local early = evidence(beforeRound, beforeRegion)
-        if early then
-            return true, "WATCHDOG_TELEPORT_" .. tostring(early)
+        if not moved then
+            return false, "WATCHDOG_TWEEN_PRE_FAILED_" .. tostring(moveKind)
         end
 
-        exactTouch(r, portal)
-        r.CFrame = CFrame.lookAt(beyond, portal.Position)
-        pcall(function()
-            r.AssemblyLinearVelocity = Vector3.zero
-            r.AssemblyAngularVelocity = Vector3.zero
-        end)
+        emit(
+            "WATCHDOG_TWEEN_APPROACH",
+            "kind=" .. tostring(moveKind)
+                .. " studs=" .. string.format("%.1f", moveDist or 0)
+                .. " time=" .. string.format("%.2f", moveTime or 0)
+        )
+
+        local early = evidence(beforeRound, beforeRegion)
+        if early then return true, "WATCHDOG_TWEEN_" .. tostring(early) end
+
         exactTouch(r, portal)
 
-        local deadline = os.clock() + 1.15
+        Motion.MoveToPosition(
+            r,
+            beyond,
+            Vector3.new(portal.Position.X, travelY, portal.Position.Z),
+            {Speed = Motion.DEFAULT_SPEED, MaxTime = 0.30}
+        )
+
+        exactTouch(r, portal)
+
+        local deadline = os.clock() + 1.05
         while os.clock() < deadline do
             task.wait(0.06)
             local hit = evidence(beforeRound, beforeRegion)
             if hit then
                 emit(
-                    "WATCHDOG_TELEPORT_PORTAL_SUCCESS",
+                    "WATCHDOG_TWEEN_PORTAL_SUCCESS",
                     "name=" .. tostring(row.Name) .. " result=" .. tostring(hit)
                 )
-                return true, "WATCHDOG_TELEPORT_" .. tostring(hit)
+                return true, "WATCHDOG_TWEEN_" .. tostring(hit)
             end
         end
 
         for _, offset in ipairs({-2, 0, 2, -4, 4}) do
-            if not r.Parent or not portal.Parent then
-                break
-            end
+            if not r.Parent or not portal.Parent then break end
 
-            local p = portal.Position + fromPortal * offset + Vector3.new(0, 2, 0)
-            r.CFrame = CFrame.lookAt(p, portal.Position)
+            local p = Vector3.new(
+                portal.Position.X + fromPortal.X * offset,
+                travelY,
+                portal.Position.Z + fromPortal.Z * offset
+            )
+
+            Motion.MoveToPosition(
+                r,
+                p,
+                Vector3.new(portal.Position.X, travelY, portal.Position.Z),
+                {Speed = 240, MaxTime = 0.12}
+            )
             exactTouch(r, portal)
-            task.wait(0.07)
+            task.wait(0.045)
 
             local hit = evidence(beforeRound, beforeRegion)
             if hit then
                 emit(
-                    "WATCHDOG_TELEPORT_PORTAL_SUCCESS",
+                    "WATCHDOG_TWEEN_PORTAL_SUCCESS",
                     "name=" .. tostring(row.Name)
                         .. " offset=" .. tostring(offset)
                         .. " result=" .. tostring(hit)
                 )
-                return true, "WATCHDOG_TELEPORT_" .. tostring(hit)
+                return true, "WATCHDOG_TWEEN_" .. tostring(hit)
             end
         end
 
         emit(
-            "WATCHDOG_TELEPORT_PORTAL_FAIL",
+            "WATCHDOG_TWEEN_PORTAL_FAIL",
             "name=" .. tostring(row.Name) .. " round=" .. tostring(row.RoundNum)
         )
 
-        return false, "WATCHDOG_TELEPORT_NO_PROGRESSION"
+        return false, "WATCHDOG_TWEEN_NO_PROGRESSION"
     end
 
     function W:Recover(oldRegion, reason)
@@ -274,18 +275,14 @@ return function(D)
         local rows = currentPortalRows()
         if #rows > 0 then
             for i = 1, math.min(3, #rows) do
-                local okTeleport, result = teleportPortal(rows[i], oldRegion, reason)
-                if okTeleport then
-                    return true, result
-                end
+                local okTween, result = tweenPortal(rows[i], oldRegion, reason)
+                if okTween then return true, result end
             end
 
-            -- Do not fall back to the base local-portal native walking path.
-            return false, "WORLD1_LOCAL_PORTAL_TELEPORT_UNRESOLVED"
+            -- Do not fall back to the base native-walking local portal path.
+            return false, "WORLD1_LOCAL_PORTAL_TWEEN_UNRESOLVED"
         end
 
-        -- No exact local current portal exists. The older watchdog's bounded
-        -- learned/probe recovery is still allowed; it is not the portal walk.
         return baseRecover(self, oldRegion, reason)
     end
 
