@@ -2,6 +2,19 @@
 
 Purpose: chronological record of important production changes, failures, and evidence. Future conversations should read this together with `IRONSOUL_PROJECT_MEMORY.md` before modifying the project.
 
+## 2026-08-11 - Diagnostic / continuity policy correction
+### User preference
+Temporary recon scripts should be standalone raw scripts supplied in chat. They should not live in the production GitHub repository unless the user explicitly asks for that.
+
+### Changed
+- Removed the temporary committed `DIAGNOSTIC.lua` and `diagnostics/world_recon_v61_11.lua` files.
+- Added `IRONSOUL_PROJECT_MEMORY.md` as persistent project knowledge.
+- Added `IRONSOUL_CHANGELOG.md` as the chronological evidence/change record.
+- Added `START_HERE_CHATGPT.md` instructing future chats to read the memory/changelog before changing code.
+
+### Maintenance rule
+Production fixes stay in GitHub. Deep one-off diagnostics stay raw in chat. Update project memory/changelog whenever production behavior or verified knowledge changes.
+
 ## 2026-08-11 - V61.11.1 combat hotfix
 ### Evidence
 Latest World2 D1 run reached Round4/CompletedRound3, then remained in GATE with 0 local/global enemies, no region-valid DragonEgg, no recognized doors, and no objective-probe events.
