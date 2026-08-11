@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - CAVE MODE V61.18 R2
+-- IRON SOUL - CAVE MODE V61.18 R3
 --
 -- Dedicated Cave runtime:
 --   * Cave1/Cave2/Cave3 are one-room Round1 resource activities;
@@ -7,7 +7,8 @@
 --   * distant Cave enemies are smooth-tween approached instead of waiting for
 --     Story combat hit-stall recovery or manual user attacks;
 --   * never use Story door/portal progression as a Cave requirement;
---   * one settlement -> Lobby; no automatic paid replay spam yet;
+--   * one settlement -> Lobby; no automatic paid replay spam;
+--   * any Cave entry (manual or SMART) counts toward SMART Cave cooldown;
 --   * persist baseline for post-Lobby reward audit.
 --========================================================--
 
@@ -18,6 +19,7 @@ local TeleportService = game:GetService("TeleportService")
 local LocalPlayer = Players.LocalPlayer
 local LOBBY_PLACE_ID = 117533937949084
 local PENDING_FILE = "IronSoul_CavePending_V61_17.txt"
+local PLANNER_STATE_FILE = "IronSoul_CavePlanner_V61_18.txt"
 
 local CAVES = {
     [91584731222940] = {WorldId="Cave1", Name="Cave of Crystal", RewardKind="CrystalShards"},
@@ -66,6 +68,23 @@ local function readPending()
     local ok, text = pcall(readfile, PENDING_FILE)
     if not ok or type(text) ~= "string" or text == "" then return nil end
     return parse(text)
+end
+
+local function markPlannerCooldown(reason)
+    if type(writefile) ~= "function" then return end
+
+    local row = {}
+    if type(readfile) == "function" then
+        local ok, text = pcall(readfile, PLANNER_STATE_FILE)
+        if ok and type(text) == "string" then
+            row = parse(text)
+        end
+    end
+
+    row.LastCaveUnix = tostring(os.time())
+    row.LastWorldId = tostring(Cave.WorldId)
+    row.LastReason = tostring(reason or "CAVE_ENTRY")
+    pcall(writefile, PLANNER_STATE_FILE, serialize(row))
 end
 
 local function findModule(name)
@@ -173,6 +192,7 @@ if liveWorldId ~= nil and tostring(liveWorldId) ~= Cave.WorldId then
 end
 
 writePending("RUNNING")
+markPlannerCooldown("CAVE_ENTERED")
 
 local function writeRun(result)
     if type(writefile) ~= "function" then return end
@@ -217,6 +237,7 @@ local function returnLobby(reason)
     task.wait(0.22)
     writePending(reason)
     writeRun(reason)
+    markPlannerCooldown("CAVE_COMPLETED")
     status("CLEAR | one-run policy -> Lobby | " .. tostring(reason))
 
     local queueBootstrap = getgenv().IronSoulQueueBootstrap
