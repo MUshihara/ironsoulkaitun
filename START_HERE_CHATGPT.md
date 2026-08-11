@@ -14,7 +14,8 @@ Read this, then `IRONSOUL_PROJECT_MEMORY.md`, then inspect current repo. Long ch
 - Lobby `117533937949084` is the progression brain.
 - Fresh-account recon proved `DataUtil:GetPlayerData()` can be fully ready with `Loaded=true`, `LG_PowerNew1=110`, but **`LG_Level=nil` permanently**.
 - Real level is `PlayerData.LevelData.Level` (fresh recon: Level 1). Never require `LG_Level` alone.
-- Current lobby must wait/self-heal on slow data, then use PlayerData level fallback.
+- Handle this in the lobby **preflight compatibility layer**, not with another late lobby patch. Resolve PlayerData level, then locally mirror it to `LG_Level` only for the proven historical lobby code.
+- The malformed `lobby_v61_13_1_fresh_level.patch` was deleted. Do not recreate/re-add it.
 
 ## Current priority
 Freeze World2. Prove **Tutorial -> Lobby -> World1 -> Lobby** first, then expand lobby mechanics.
