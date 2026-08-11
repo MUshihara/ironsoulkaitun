@@ -1,0 +1,83 @@
+--- a/systems/transition_watchdog.lua
++++ b/systems/transition_watchdog.lua
+@@ -49,6 +49,18 @@
+     local LastAttempt =
+         -math.huge
+ 
++    -- Recovery is intentionally LOCAL. A replicated current-1 portal can be
++    -- thousands of studs away or belong to another branch/section. CFraming
++    -- to such a portal can skip straight to a boss while GameRound remains
++    -- unchanged (proven in World2 D1).
++    local MAX_RECOVERY_PORTAL_DISTANCE =
++        220
++
++    -- Historical V61.5 learning could store PORTAL_MOVED, which only meant
++    -- the character displaced >100 studs. That is not progression proof.
++    local INVALID_LEARNED_RESULTS = {
++        PORTAL_MOVED = true,
++        CHARACTER_CHANGED = true,
++    }
++
+     local Learn = {}
+@@ -304,14 +316,6 @@
+             return "GAME_ROUND_CHANGED"
+         end
+ 
+-        if (
+-            r.Position
+-            - beforePos
+-        ).Magnitude > 100
+-        then
+-            return "PORTAL_MOVED"
+-        end
+-
+         local region,
+             dist =
+                 D.nearestWakeRegion(
+@@ -387,6 +391,10 @@
+                     )
+ 
+                 if roundNum
+                         == current - 1
++                    and (
++                        part.Position
++                        - r.Position
++                    ).Magnitude <= MAX_RECOVERY_PORTAL_DISTANCE
+                     and (
+                         rf
+                         or localPortal
+@@ -776,6 +784,14 @@
+             return false
+         end
+ 
++        if tonumber(row.Distance)
++                and tonumber(row.Distance)
++                    > MAX_RECOVERY_PORTAL_DISTANCE
++        then
++            emit("WATCHDOG_PORTAL_REJECT", "TOO_FAR dist=" .. tostring(row.Distance))
++            return false, "PORTAL_TOO_FAR"
++        end
++
+         local beforeRound =
+             D.gameRound()
+@@ -987,6 +1003,18 @@
+             return false
+         end
+ 
++        -- Never replay routes learned from displacement-only evidence. Those
++        -- entries may still exist in the user's persistent learn file from
++        -- older versions, so reject them at use-time instead of trusting
++        -- historical success counters.
++        if INVALID_LEARNED_RESULTS[
++            tostring(learned.result)
++        ] then
++            emit(
++                "WATCHDOG_LEARNED_REJECT",
++                "key=" .. key .. " result=" .. tostring(learned.result)
++            )
++            return false
++        end
++
+         local source =
+             tableV3(
+                 learned.source
