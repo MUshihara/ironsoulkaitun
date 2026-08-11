@@ -1,10 +1,9 @@
 -- IRON SOUL KAITUN - STABLE ENTRY
--- Keep the historical bootstrap URL working while the active runtime lives
--- in a versioned bootstrap file.
+-- Existing loader URLs stay valid; active runtime is versioned here.
 
 local url =
     "https://raw.githubusercontent.com/"
-    .. "MUshihara/ironsoulkaitun/main/bootstrap_v61_10.lua"
+    .. "MUshihara/ironsoulkaitun/main/bootstrap_v61_11.lua"
     .. "?t="
     .. tostring(os.time())
 
