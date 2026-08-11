@@ -1,6 +1,6 @@
 -- IRON SOUL - V61.9 TELEMETRY ENTRY
--- Applies V61.6 multi-match telemetry, scope hardening, settlement finalization,
--- and terminal-summary protection to the immutable telemetry source.
+-- Applies V61.6 multi-match telemetry, scope hardening, journal metadata,
+-- settlement finalization, and terminal-summary protection.
 
 local function getPatcher()
     local loadRaw =
@@ -46,6 +46,7 @@ return getPatcher()({
     patch_paths = {
         "systems/patches/telemetry_v61_6.patch",
         "systems/patches/telemetry_v61_6_hotfix.patch",
+        "systems/patches/telemetry_v61_9_journal_metadata.patch",
         "systems/patches/telemetry_v61_7_settlement_finalize.patch",
         "systems/patches/telemetry_v61_9_terminal_summary.patch",
     },
