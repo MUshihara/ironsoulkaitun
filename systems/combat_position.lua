@@ -1,13 +1,22 @@
 --========================================================--
--- IRON SOUL - ADAPTIVE COMBAT POSITION V61.0
+-- IRON SOUL - CONTINUOUS DODGE COMBAT POSITION V61.4
 --
--- Profiles:
--- DEFAULT      : proven 9-stud position
--- EVADE        : player got hit -> side angle + farther offset
--- EVADE_WIDE   : repeated hit -> wider side angle
--- HIT_RECOVERY : target HP stalled -> proven 5.5-stud close position
+-- Attack rotation never pauses because of these profiles.
 --
--- It never uses unvalidated extreme heights or below-floor positioning.
+-- Normal mobs:
+--   DEFAULT -> reactive EVADE / EVADE_WIDE on incoming damage.
+--
+-- Boss-like HP:
+--   BOSS_ORBIT continuously circles while attacking.
+--
+-- Low HP:
+--   LOW_HP_ORBIT keeps a wider, faster orbit while still attacking.
+--
+-- Own attacks stop registering:
+--   HIT_RECOVERY returns to the previously validated close 5.5-stud profile.
+--
+-- Knock/ragdoll-like Humanoid state:
+--   KNOCK_EVADE changes position aggressively but does NOT fake server state.
 --========================================================--
 
 return function(D)
@@ -23,17 +32,23 @@ return function(D)
             D.CFG.ADAPTIVE_DEFAULT_OFFSET,
 
         Yaw = 0,
+        OrbitSpeed = 0,
         Side = 1,
 
+        BossLike = false,
         IncomingHits = 0,
 
         LastPlayerHP = nil,
+        PlayerMaxHP = nil,
         LastPlayerHitAt =
             -math.huge,
 
         LastTargetHP = nil,
         LastTargetDamageAt =
             os.clock(),
+
+        LastHumanoidState =
+            nil,
 
         ModeStartedAt =
             os.clock(),
@@ -45,10 +60,7 @@ return function(D)
             nil,
     }
 
-    local function emit(
-        name,
-        detail
-    )
+    local function emit(name, detail)
         if type(D.event)
             == "function"
         then
@@ -65,18 +77,28 @@ return function(D)
         height,
         offset,
         yaw,
-        hold
+        hold,
+        orbitSpeed
     )
         local changed =
             S.Mode ~= mode
             or S.Height ~= height
             or S.Offset ~= offset
             or S.Yaw ~= yaw
+            or S.OrbitSpeed
+                ~= (
+                    orbitSpeed
+                    or 0
+                )
 
         S.Mode = mode
         S.Height = height
         S.Offset = offset
         S.Yaw = yaw
+        S.OrbitSpeed =
+            orbitSpeed
+            or 0
+
         S.ModeStartedAt =
             os.clock()
 
@@ -99,6 +121,14 @@ return function(D)
                     .. tostring(offset)
                     .. " yaw="
                     .. tostring(yaw)
+                    .. " orbit="
+                    .. tostring(
+                        S.OrbitSpeed
+                    )
+                    .. " boss="
+                    .. tostring(
+                        S.BossLike
+                    )
                     .. " incomingHits="
                     .. tostring(
                         S.IncomingHits
@@ -107,20 +137,83 @@ return function(D)
         end
     end
 
-    local function defaultMode()
-        setMode(
-            "DEFAULT",
-            D.CFG.ADAPTIVE_DEFAULT_HEIGHT,
-            D.CFG.ADAPTIVE_DEFAULT_OFFSET,
-            0,
-            nil
+    local function baseMode()
+        if S.BossLike then
+            setMode(
+                "BOSS_ORBIT",
+                D.CFG.ADAPTIVE_BOSS_HEIGHT,
+                D.CFG.ADAPTIVE_BOSS_OFFSET,
+                0,
+                nil,
+                D.CFG.ADAPTIVE_BOSS_ORBIT_SPEED
+                    * S.Side
+            )
+        else
+            setMode(
+                "DEFAULT",
+                D.CFG.ADAPTIVE_DEFAULT_HEIGHT,
+                D.CFG.ADAPTIVE_DEFAULT_OFFSET,
+                0,
+                nil,
+                0
+            )
+        end
+    end
+
+    local function lowHPRatio(playerHP)
+        if not playerHP
+            or not S.PlayerMaxHP
+            or S.PlayerMaxHP <= 0
+        then
+            return 1
+        end
+
+        return playerHP
+            / S.PlayerMaxHP
+    end
+
+    local function knockLike(state)
+        if state == nil then
+            return false
+        end
+
+        local text =
+            string.lower(
+                tostring(state)
+            )
+
+        return string.find(
+            text,
+            "ragdoll",
+            1,
+            true
         )
+            or string.find(
+                text,
+                "fallingdown",
+                1,
+                true
+            )
+            or string.find(
+                text,
+                "platformstanding",
+                1,
+                true
+            )
+            or string.find(
+                text,
+                "physics",
+                1,
+                true
+            )
     end
 
     function C:ResetTarget(
         enemy,
         targetHP,
-        playerHP
+        playerHP,
+        playerMaxHP,
+        humanoidState
     )
         S.LastTargetHP =
             targetHP
@@ -131,25 +224,94 @@ return function(D)
         S.LastPlayerHP =
             playerHP
 
+        S.PlayerMaxHP =
+            playerMaxHP
+
         S.LastPlayerHitAt =
             -math.huge
+
+        S.LastHumanoidState =
+            humanoidState
+
+        S.BossLike =
+            tonumber(targetHP)
+                and tonumber(targetHP)
+                    >= D.CFG.ADAPTIVE_BOSS_HP
+            or false
 
         S.IncomingHits = 0
         S.Side = 1
         S.RecoveryDamageAt = nil
 
-        defaultMode()
+        baseMode()
+
+        if S.BossLike then
+            emit(
+                "BOSS_ORBIT_START",
+                "hp="
+                    .. tostring(
+                        targetHP
+                    )
+                    .. " playerHP="
+                    .. tostring(
+                        playerHP
+                    )
+            )
+        end
     end
 
     function C:Update(
         enemy,
         targetHP,
-        playerHP
+        playerHP,
+        playerMaxHP,
+        humanoidState
     )
         local now =
             os.clock()
 
-        -- Incoming player damage.
+        if playerMaxHP
+            and playerMaxHP > 0
+        then
+            S.PlayerMaxHP =
+                playerMaxHP
+        end
+
+        local knocked =
+            knockLike(
+                humanoidState
+            )
+
+        if knocked
+            and not knockLike(
+                S.LastHumanoidState
+            )
+        then
+            S.Side =
+                -S.Side
+
+            emit(
+                "KNOCK_STATE",
+                tostring(
+                    humanoidState
+                )
+            )
+
+            setMode(
+                "KNOCK_EVADE",
+                D.CFG.ADAPTIVE_KNOCK_HEIGHT,
+                D.CFG.ADAPTIVE_KNOCK_OFFSET,
+                0,
+                D.CFG.ADAPTIVE_KNOCK_EVADE_HOLD,
+                D.CFG.ADAPTIVE_KNOCK_ORBIT_SPEED
+                    * S.Side
+            )
+        end
+
+        S.LastHumanoidState =
+            humanoidState
+
+        -- Incoming player damage: attack loop continues; only position changes.
         if playerHP ~= nil
             and S.LastPlayerHP ~= nil
             and playerHP
@@ -181,20 +343,44 @@ return function(D)
                     .. tostring(
                         playerHP
                     )
+                    .. " ratio="
+                    .. string.format(
+                        "%.2f",
+                        lowHPRatio(
+                            playerHP
+                        )
+                    )
                     .. " repeated="
                     .. tostring(
                         repeated
                     )
             )
 
-            if repeated then
+            if lowHPRatio(
+                    playerHP
+                )
+                <= D.CFG.ADAPTIVE_LOW_HP_RATIO
+            then
+                setMode(
+                    "LOW_HP_ORBIT",
+                    D.CFG.ADAPTIVE_LOW_HP_HEIGHT,
+                    D.CFG.ADAPTIVE_LOW_HP_OFFSET,
+                    0,
+                    nil,
+                    D.CFG.ADAPTIVE_LOW_HP_ORBIT_SPEED
+                        * S.Side
+                )
+
+            elseif repeated then
                 setMode(
                     "EVADE_WIDE",
                     D.CFG.ADAPTIVE_WIDE_HEIGHT,
                     D.CFG.ADAPTIVE_WIDE_OFFSET,
                     D.CFG.ADAPTIVE_WIDE_YAW
                         * S.Side,
-                    D.CFG.ADAPTIVE_EVADE_HOLD
+                    D.CFG.ADAPTIVE_EVADE_HOLD,
+                    D.CFG.ADAPTIVE_WIDE_ORBIT_SPEED
+                        * S.Side
                 )
             else
                 setMode(
@@ -203,7 +389,9 @@ return function(D)
                     D.CFG.ADAPTIVE_EVADE_OFFSET,
                     D.CFG.ADAPTIVE_EVADE_YAW
                         * S.Side,
-                    D.CFG.ADAPTIVE_EVADE_HOLD
+                    D.CFG.ADAPTIVE_EVADE_HOLD,
+                    D.CFG.ADAPTIVE_EVADE_ORBIT_SPEED
+                        * S.Side
                 )
             end
         end
@@ -253,8 +441,8 @@ return function(D)
             now
             - S.LastTargetDamageAt
 
-        -- If OUR hits are not landing, farther is the wrong direction.
-        -- Use the previously verified 5.5-stud close recovery profile.
+        -- Preserve damage reliability above avoidance. If attacks stop
+        -- registering, move to the already-validated close profile.
         if noTargetDamageAge
                 >= D.CFG.ADAPTIVE_NO_TARGET_DAMAGE
             and S.Mode
@@ -268,7 +456,8 @@ return function(D)
                 D.CFG.ADAPTIVE_RECOVERY_HEIGHT,
                 D.CFG.ADAPTIVE_RECOVERY_OFFSET,
                 0,
-                nil
+                nil,
+                0
             )
 
             emit(
@@ -289,13 +478,44 @@ return function(D)
                     - S.RecoveryDamageAt
                     >= D.CFG.ADAPTIVE_RETURN_STABLE
             then
-                defaultMode()
+                if lowHPRatio(
+                        playerHP
+                    )
+                    <= D.CFG.ADAPTIVE_LOW_HP_RATIO
+                then
+                    setMode(
+                        "LOW_HP_ORBIT",
+                        D.CFG.ADAPTIVE_LOW_HP_HEIGHT,
+                        D.CFG.ADAPTIVE_LOW_HP_OFFSET,
+                        0,
+                        nil,
+                        D.CFG.ADAPTIVE_LOW_HP_ORBIT_SPEED
+                            * S.Side
+                    )
+                else
+                    baseMode()
+                end
+            end
+
+        elseif S.Mode
+            == "LOW_HP_ORBIT"
+        then
+            -- Stay defensive until this target dies or HP is no longer low.
+            if lowHPRatio(
+                    playerHP
+                )
+                > D.CFG.ADAPTIVE_LOW_HP_RATIO
+                    + 0.08
+                and noTargetDamageAge
+                    < D.CFG.ADAPTIVE_NO_TARGET_DAMAGE
+            then
+                baseMode()
             end
 
         elseif (
             S.Mode == "EVADE"
-            or S.Mode
-                == "EVADE_WIDE"
+            or S.Mode == "EVADE_WIDE"
+            or S.Mode == "KNOCK_EVADE"
         )
             and now >= S.ModeUntil
             and now
@@ -303,17 +523,46 @@ return function(D)
                 >= D.CFG.ADAPTIVE_EVADE_HOLD
             and noTargetDamageAge
                 < D.CFG.ADAPTIVE_NO_TARGET_DAMAGE
+            and not knocked
         then
-            defaultMode()
+            if lowHPRatio(
+                    playerHP
+                )
+                <= D.CFG.ADAPTIVE_LOW_HP_RATIO
+            then
+                setMode(
+                    "LOW_HP_ORBIT",
+                    D.CFG.ADAPTIVE_LOW_HP_HEIGHT,
+                    D.CFG.ADAPTIVE_LOW_HP_OFFSET,
+                    0,
+                    nil,
+                    D.CFG.ADAPTIVE_LOW_HP_ORBIT_SPEED
+                        * S.Side
+                )
+            else
+                baseMode()
+            end
         end
     end
 
     function C:GetMovement()
+        local yaw =
+            S.Yaw
+
+        if S.OrbitSpeed ~= 0 then
+            yaw +=
+                (
+                    os.clock()
+                    - S.ModeStartedAt
+                )
+                * S.OrbitSpeed
+        end
+
         return {
             Mode = S.Mode,
             Height = S.Height,
             Offset = S.Offset,
-            Yaw = S.Yaw,
+            Yaw = yaw,
         }
     end
 
@@ -323,11 +572,21 @@ return function(D)
             Height = S.Height,
             Offset = S.Offset,
             Yaw = S.Yaw,
+            OrbitSpeed =
+                S.OrbitSpeed,
             Side = S.Side,
+            BossLike =
+                S.BossLike,
             IncomingHits =
                 S.IncomingHits,
             LastPlayerHP =
                 S.LastPlayerHP,
+            PlayerMaxHP =
+                S.PlayerMaxHP,
+            PlayerRatio =
+                lowHPRatio(
+                    S.LastPlayerHP
+                ),
             LastPlayerHitAt =
                 S.LastPlayerHitAt,
             LastTargetHP =
@@ -337,6 +596,8 @@ return function(D)
             TargetNoDamageAge =
                 os.clock()
                 - S.LastTargetDamageAt,
+            HumanoidState =
+                S.LastHumanoidState,
         }
     end
 
