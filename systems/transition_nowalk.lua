@@ -1,24 +1,29 @@
 --========================================================--
--- IRON SOUL - WORLD1 TELEPORT-ONLY TRANSITION WRAPPER V61.13.3
+-- IRON SOUL - WORLD1 TWEEN TRANSITION WRAPPER V61.14
 --
--- User policy: normal farming must NOT visibly walk to/through portals.
--- Preserve the proven transition resolver, but replace World1 movement
--- fallbacks with exact current-1 portal CFrame snap + touch + verification.
--- No generic RoundPortal RF is invoked.
+-- User-required movement style:
+--   * NO Humanoid walking / MoveTo for World1 transitions.
+--   * Smooth fast CFrame tween/floating movement instead of hard snaps.
+--   * Exact current-1 portal only.
+--   * Exact touch/handshake + authoritative progression verification.
+--   * Never generic RoundPortal RF.
 --========================================================--
 
 local baseLoadRaw =
     getgenv().IronSoulDependencyBaseLoadRaw
     or getgenv().IronSoulLoadRaw
 
-assert(type(baseLoadRaw) == "function", "V61.13.3 base loader unavailable")
+assert(type(baseLoadRaw) == "function", "V61.14 base loader unavailable")
 
 local ok, baseFactory = baseLoadRaw("systems/transition.lua")
-assert(ok and type(baseFactory) == "function", "V61.13.3 base transition unavailable")
+assert(ok and type(baseFactory) == "function", "V61.14 base transition unavailable")
+
+local motionOk, Motion = baseLoadRaw("systems/world1_motion.lua")
+assert(motionOk and type(Motion) == "table", "V61.14 World1 motion unavailable")
 
 return function(D)
     local R = baseFactory(D)
-    assert(type(R) == "table", "V61.13.3 base transition build failed")
+    assert(type(R) == "table", "V61.14 base transition build failed")
 
     local basePulse = R.PulseNativeMovement
     local baseGuided = R.GuidedWalk
@@ -163,7 +168,7 @@ return function(D)
         return h.Unit
     end
 
-    local function teleportPortal(oldRegion, reason)
+    local function tweenPortal(oldRegion, reason)
         if hasObjective() then
             return false, "OBJECTIVE_ACTIVE"
         end
@@ -184,23 +189,31 @@ return function(D)
             -portal.CFrame.LookVector
         )
 
+        -- Keep the same proven portal geometry: about 10 studs before and
+        -- 12-14 studs through. Only the visual movement style changes.
         local preDistance =
             D.CFG
             and tonumber(D.CFG.FAST_PORTAL_PRE_DISTANCE)
             or 10
 
         local crossDistance =
-            D.CFG
-            and tonumber(D.CFG.FAST_PORTAL_CROSS_DISTANCE)
-            or 12
+            math.max(
+                12,
+                D.CFG
+                and tonumber(D.CFG.FAST_PORTAL_CROSS_DISTANCE)
+                or 12
+            )
 
-        local pre =
-            portal.Position
-            + fromPortal * preDistance
-            + Vector3.new(0, 2, 0)
+        local travelY = root.Position.Y
+
+        local pre = Vector3.new(
+            portal.Position.X + fromPortal.X * preDistance,
+            travelY,
+            portal.Position.Z + fromPortal.Z * preDistance
+        )
 
         emit(
-            "TELEPORT_PORTAL_START",
+            "TWEEN_PORTAL_START",
             "reason=" .. tostring(reason)
                 .. " round=" .. tostring(portal:GetAttribute("RoundNum"))
                 .. " dist=" .. string.format("%.1f", startDistance or -1)
@@ -208,87 +221,115 @@ return function(D)
                 .. " portal=" .. tostring(portal.Position)
         )
 
-        root.CFrame = CFrame.lookAt(pre, portal.Position)
-        pcall(function()
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-        end)
+        local moved, moveKind, moveDist, moveTime = Motion.MoveToPosition(
+            root,
+            pre,
+            Vector3.new(portal.Position.X, travelY, portal.Position.Z),
+            {
+                Speed = startDistance and startDistance > 80 and Motion.FAR_SPEED or Motion.DEFAULT_SPEED,
+                MaxTime = 0.90,
+            }
+        )
 
-        task.wait(0.05)
+        if not moved then
+            return false, "TWEEN_PRE_FAILED_" .. tostring(moveKind)
+        end
 
-        -- Baseline AFTER long-distance snap so our own approach is never
-        -- mistaken for portal progression.
+        emit(
+            "TWEEN_PORTAL_APPROACH",
+            "kind=" .. tostring(moveKind)
+                .. " studs=" .. string.format("%.1f", moveDist or 0)
+                .. " time=" .. string.format("%.2f", moveTime or 0)
+        )
+
+        -- Baseline AFTER approach tween. Never count our own glide as portal
+        -- progression evidence.
         local verifyFrom = root.Position
 
         local early = progressionEvidence(beforeRound, oldRegion, verifyFrom)
         if early then
-            emit("TELEPORT_PORTAL_SUCCESS", "phase=pre result=" .. tostring(early))
-            return true, "TELEPORT_" .. tostring(early)
+            emit("TWEEN_PORTAL_SUCCESS", "phase=pre result=" .. tostring(early))
+            return true, "TWEEN_" .. tostring(early)
         end
 
         exactTouch(root, portal)
 
-        local beyond =
-            portal.Position
-            - fromPortal * crossDistance
-            + Vector3.new(0, 2, 0)
+        local beyond = Vector3.new(
+            portal.Position.X - fromPortal.X * crossDistance,
+            travelY,
+            portal.Position.Z - fromPortal.Z * crossDistance
+        )
 
-        -- Direct teleport through the exact verified current-1 portal.
-        root.CFrame = CFrame.lookAt(beyond, portal.Position)
-        pcall(function()
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-        end)
+        Motion.MoveToPosition(
+            root,
+            beyond,
+            Vector3.new(portal.Position.X, travelY, portal.Position.Z),
+            {
+                Speed = Motion.DEFAULT_SPEED,
+                MaxTime = 0.28,
+            }
+        )
 
         exactTouch(root, portal)
 
-        local deadline = os.clock() + 1.25
+        local deadline = os.clock() + 1.15
         while os.clock() < deadline do
             task.wait(0.06)
 
             local evidence = progressionEvidence(beforeRound, oldRegion, verifyFrom)
             if evidence then
                 emit(
-                    "TELEPORT_PORTAL_SUCCESS",
+                    "TWEEN_PORTAL_SUCCESS",
                     "phase=cross result=" .. tostring(evidence)
                         .. " pos=" .. tostring(root.Position)
                 )
-                return true, "TELEPORT_" .. tostring(evidence)
+                return true, "TWEEN_" .. tostring(evidence)
             end
         end
 
-        -- No walking fallback. A few exact CFrame/touch points inside the
-        -- portal are cheaper and preserve the user's teleport-only policy.
+        -- If the game needs an exact touch frame, glide through a few tiny
+        -- points inside the portal. Still no Humanoid movement/walking.
         for _, offset in ipairs({-2.0, 0.0, 2.0, -4.0, 4.0}) do
             if not portal.Parent or not root.Parent then
                 break
             end
 
-            local p = portal.Position + fromPortal * offset + Vector3.new(0, 2, 0)
-            root.CFrame = CFrame.lookAt(p, portal.Position)
+            local p = Vector3.new(
+                portal.Position.X + fromPortal.X * offset,
+                travelY,
+                portal.Position.Z + fromPortal.Z * offset
+            )
+
+            Motion.MoveToPosition(
+                root,
+                p,
+                Vector3.new(portal.Position.X, travelY, portal.Position.Z),
+                {Speed = 240, MaxTime = 0.12}
+            )
+
             exactTouch(root, portal)
-            task.wait(0.07)
+            task.wait(0.045)
 
             local evidence = progressionEvidence(beforeRound, oldRegion, verifyFrom)
             if evidence then
                 emit(
-                    "TELEPORT_PORTAL_SUCCESS",
+                    "TWEEN_PORTAL_SUCCESS",
                     "phase=touch_probe offset=" .. tostring(offset)
                         .. " result=" .. tostring(evidence)
                 )
-                return true, "TELEPORT_" .. tostring(evidence)
+                return true, "TWEEN_" .. tostring(evidence)
             end
         end
 
         emit(
-            "TELEPORT_PORTAL_NO_PROGRESS",
+            "TWEEN_PORTAL_NO_PROGRESS",
             "reason=" .. tostring(reason)
                 .. " finalDist=" .. tostring(
                     portal.Parent and (portal.Position - root.Position).Magnitude or nil
                 )
         )
 
-        return false, "TELEPORT_PORTAL_NO_PROGRESSION"
+        return false, "TWEEN_PORTAL_NO_PROGRESSION"
     end
 
     function R:PulseNativeMovement(oldRegion, preferred, reason)
@@ -296,14 +337,13 @@ return function(D)
             return basePulse(self, oldRegion, preferred, reason)
         end
 
-        -- World1 must never visibly walk as a transition fallback.
-        local okTeleport, result = teleportPortal(oldRegion, "PULSE:" .. tostring(reason))
-        if okTeleport then
+        local okTween, result = tweenPortal(oldRegion, "PULSE:" .. tostring(reason))
+        if okTween then
             return true, result
         end
 
-        emit("WORLD1_WALK_PULSE_SKIPPED", tostring(result))
-        return false, "WORLD1_NO_WALK_PULSE"
+        emit("WORLD1_NATIVE_WALK_SKIPPED", tostring(result))
+        return false, "WORLD1_TWEEN_ONLY"
     end
 
     function R:GuidedWalk(oldRegion, reason)
@@ -311,7 +351,7 @@ return function(D)
             return baseGuided(self, oldRegion, reason)
         end
 
-        return teleportPortal(oldRegion, "GUIDED:" .. tostring(reason))
+        return tweenPortal(oldRegion, "GUIDED:" .. tostring(reason))
     end
 
     return R
