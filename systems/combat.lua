@@ -1,5 +1,6 @@
--- IRON SOUL - V61.7 COMBAT ENTRY
--- Applies the verified boss-safe V61.7 tuning to the immutable V61.6 combat source.
+-- IRON SOUL - V61.8 COMBAT ENTRY
+-- Applies V61.7 boss-safe tuning plus V61.8 burst-safe positioning values
+-- to the immutable V61.6 combat source.
 
 local function getPatcher()
     local loadRaw =
@@ -32,7 +33,7 @@ local function getPatcher()
     local patcher = fn()
     assert(
         type(patcher) == "function",
-        "V61.7 patch loader unavailable"
+        "V61.8 patch loader unavailable"
     )
 
     return patcher
@@ -44,5 +45,6 @@ return getPatcher()({
     path = "systems/combat.lua",
     patch_paths = {
         "systems/patches/combat_v61_7_boss_safe.patch",
+        "systems/patches/combat_v61_8_burst_safe.patch",
     },
 })
