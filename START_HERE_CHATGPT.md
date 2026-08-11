@@ -1,22 +1,31 @@
 # Iron Soul Kaitun — START HERE
 
-Read this file, then `IRONSOUL_PROJECT_MEMORY.md`, then inspect the current repo.
-Do **not** read the long changelog by default; use it only to trace an old regression.
+Read this file, then `IRONSOUL_PROJECT_MEMORY.md`, then inspect current repo.
+Long changelog is optional; use only to trace an old regression.
 
-## Non-negotiable engineering rules
-- **Headless/API-first:** remotes/modules/server state first. No mouse/GUI clicking in normal automation.
-- Fast farming is good only when **server progression stays valid**.
-- **Enemies/DragonEgg always outrank destructibles.**
-- Never attack scenery because it has `HitCount` or `DestructibleObject`.
-- Unknown destructible may be attacked only when it is the **first physical blocker on the route to the authoritative current portal/wake region**.
-- `OBJECT_REMOVED`, large movement, or CFrame displacement are **not progression proof**.
-- Progression truth = GameRound / settlement / new valid objective / new valid region.
-- Never chase a replicated portal across the map.
-- Never force RoundPortal RF just because it exists: this was proven able to skip rooms/state.
-- Exact local portal: safe pre-position + native/touch handshake + progression verification.
-- Preserve validated World1 combat/forge/door logic; isolate World2 experiments.
-- Temporary diagnostics are standalone `.txt` scripts in chat, not GitHub.
-- Recovery/diagnostic helpers must fail closed and must not kill combat.
+## Non-negotiable
+- 24/7 NEWBIE -> end progression.
+- **Headless/API-first:** remotes/modules/server state. No mouse/GUI clicking in normal automation.
+- Fast only when server state stays valid.
+- Preserve proven World1 combat/forge/traversal; do not casually retune it.
+- Enemy/DragonEgg outrank destructibles.
+- Never attack scenery because of `HitCount`/`DestructibleObject` alone.
+- Never chase far replicated portals or accept movement/object removal as progression proof.
+- Do not generically force RoundPortal RF; proven able to skip rooms/state.
+- Recovery/diagnostic helpers fail closed; never kill combat.
+- Diagnostics are standalone `.txt` from chat, not production repo.
 
-## Current focus
-World2 D1 (`136216144170036`) progression. Current repository is source of truth.
+## Current priority
+**Freeze World2 tuning. Return to fresh account -> Tutorial -> Lobby -> World1.**
+Lobby is the progression brain and must be fully learned/validated before more World2 work.
+
+## Lobby rule
+Slow fresh/mobile PlayerData must WAIT/SELF-HEAL, never permanently stop on a short timeout.
+Current lobby preflight waits for stable PlayerData + Loaded/Level/Power before running proven lobby logic and queues stable `bootstrap.lua` across teleports.
+
+## Mechanic status
+- Proven: headless forge, EquipBest, smart cleanup, pets hatch/equip, tasks/dailies pieces, Sword skills, attributes, season/lottery pieces, World1 progression/matchmaking.
+- Pet growth Fortify/StarUp/SkillUp was mapped but previously disabled when mats/dupes were insufficient.
+- Blessing / Enchant / Merchant-vendor / Glory-Wheel-specific automation must be re-learned from the full lobby recon before production assumptions.
+
+Repo is source of truth when chat memory conflicts.
