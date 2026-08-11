@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - FAST PORTAL + SURVIVAL TELEMETRY V61.4
+-- IRON SOUL - SELF-HEALING TRANSITION TELEMETRY V61.5
 --========================================================--
 
 return function(D)
@@ -19,10 +19,10 @@ return function(D)
     local started = false
 
     local TRACE_FILE =
-        "IronSoul_Telemetry_V61_4.txt"
+        "IronSoul_Telemetry_V61_5.txt"
 
     local STATE_FILE =
-        "IronSoul_LastState_V61_4.txt"
+        "IronSoul_LastState_V61_5.txt"
 
     local function sv(v)
         if v == nil then
@@ -69,7 +69,7 @@ return function(D)
             )
         )
 
-        while #rows > 120 do
+        while #rows > 180 do
             table.remove(
                 rows,
                 1
@@ -397,7 +397,7 @@ return function(D)
         end)
 
         local lines = {
-            "Version=V61.4",
+            "Version=V61.5",
             "Label="
                 .. sv(label),
             "State="
