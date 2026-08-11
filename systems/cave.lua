@@ -1,14 +1,14 @@
 --========================================================--
--- IRON SOUL - CAVE MODE V61.17 R1
+-- IRON SOUL - CAVE MODE V61.18 R2
 --
--- First production Cave milestone:
---   * recognize Cave1 / Cave2 / Cave3 by live PlaceId + GameRoundCfg
---   * reuse the proven headless combat engine for the one-room Cave fight
---   * NEVER auto-spam Cave Tickets yet
---   * after exactly one settlement, return to Lobby before replay can consume
---     another Ticket1
---   * persist a pre-reward baseline; Lobby resolves the authoritative material
---     delta after PlayerData has fully replicated there
+-- Dedicated Cave runtime:
+--   * Cave1/Cave2/Cave3 are one-room Round1 resource activities;
+--   * start Cave-specific arena/enemy chase BEFORE the proven combat driver;
+--   * distant Cave enemies are smooth-tween approached instead of waiting for
+--     Story combat hit-stall recovery or manual user attacks;
+--   * never use Story door/portal progression as a Cave requirement;
+--   * one settlement -> Lobby; no automatic paid replay spam yet;
+--   * persist baseline for post-Lobby reward audit.
 --========================================================--
 
 local Players = game:GetService("Players")
@@ -27,17 +27,17 @@ local CAVES = {
 
 local Cave = CAVES[game.PlaceId]
 if not Cave then
-    error("Cave V61.17 unsupported PlaceId=" .. tostring(game.PlaceId))
+    error("Cave V61.18 unsupported PlaceId=" .. tostring(game.PlaceId))
 end
 
 local loadRaw = getgenv().IronSoulLoadRaw
-assert(type(loadRaw) == "function", "Cave V61.17 loader unavailable")
+assert(type(loadRaw) == "function", "Cave V61.18 loader unavailable")
 
 local function status(text)
     text = tostring(text or "")
     local fn = getgenv().IronSoulStatus
     if type(fn) == "function" then pcall(fn, "Cave | " .. text) end
-    print("[IronSoul Cave V61.17]", text)
+    print("[IronSoul Cave V61.18]", text)
 end
 
 local function parse(text)
@@ -139,8 +139,6 @@ local liveDiff = cfg and cfg:GetAttribute("DiffLevel")
 local function writePending(result)
     if type(writefile) ~= "function" then return end
 
-    -- If a future SMART Lobby planner created this baseline BEFORE CreatRoom,
-    -- preserve its authoritative TicketBeforeEntry/RewardBefore values.
     local row = readPending() or {}
     local samePending = row.Resolved ~= "true"
         and tostring(row.WorldId or "") == tostring(Cave.WorldId)
@@ -149,7 +147,7 @@ local function writePending(result)
 
     if not samePending then row = {} end
 
-    row.Version = "V61.17"
+    row.Version = "V61.18"
     row.Resolved = "false"
     row.PlaceId = tostring(game.PlaceId)
     row.WorldId = tostring(Cave.WorldId)
@@ -182,8 +180,8 @@ local function writeRun(result)
     local nowTicket = ticket1(now)
     local nowReward = rewardValue(now)
 
-    pcall(writefile, "IronSoul_CaveRun_V61_17.txt", table.concat({
-        "Version=V61.17",
+    pcall(writefile, "IronSoul_CaveRun_V61_18.txt", table.concat({
+        "Version=V61.18",
         "AuditScope=CAVE_LOCAL_PRE_RETURN",
         "FinalAuditFile=IronSoul_CaveAudit_V61_17.txt",
         "Result=" .. tostring(result),
@@ -204,9 +202,17 @@ local function writeRun(result)
     }, "\n"))
 end
 
+local function stopChase()
+    local chase = getgenv().IronSoulCaveChase
+    if type(chase) == "table" and type(chase.Stop) == "function" then
+        pcall(chase.Stop)
+    end
+end
+
 local function returnLobby(reason)
     if Finished then return end
     Finished = true
+    stopChase()
 
     task.wait(0.22)
     writePending(reason)
@@ -253,6 +259,18 @@ if StartTicket ~= nil and StartTicket <= 0 then
     status("NOTICE | Ticket1 is 0 after cave entry; finishing paid run only")
 end
 
+-- Cave-specific movement runs alongside the proven attack driver. It moves only
+-- when every useful target is far, or when Round1 needs to be entered/armed.
+do
+    local chaseOk, chase = loadRaw("systems/cave_chase.lua")
+    if chaseOk and type(chase) == "table" and type(chase.Start) == "function" then
+        pcall(chase.Start)
+        status("One-room chase ready | farEnemy>45 studs")
+    else
+        status("WARNING | Cave chase unavailable | combat continues fail-closed")
+    end
+end
+
 -- Prevent systems/combat.lua from redirecting back into Cave mode while this
 -- wrapper deliberately loads the proven underlying combat entry.
 getgenv().IronSoulInsideCaveCombat = true
@@ -260,6 +278,7 @@ local ok, result = loadRaw("systems/combat.lua")
 getgenv().IronSoulInsideCaveCombat = nil
 
 if not ok then
+    stopChase()
     writePending("COMBAT_LOAD_FAILED")
     writeRun("COMBAT_LOAD_FAILED")
     error("Cave combat load failed: " .. tostring(result))
