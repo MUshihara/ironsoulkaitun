@@ -1,8 +1,8 @@
--- IRON SOUL - V61.13.3 COMBAT ENTRY
+-- IRON SOUL - V61.14 COMBAT ENTRY
 --
--- Preserve the validated combat patch chain. Only dependency routing changes:
--- World1 transition fallbacks are wrapped so portals use teleport/touch/verify
--- instead of visible Humanoid walking. World2 behavior remains isolated.
+-- Preserve the validated combat chain. World1 transition movement is now
+-- smooth fast CFrame tween/floating movement: no Humanoid walking to/through
+-- gates or portals. World2 remains isolated/frozen.
 
 local originalLoadRaw = getgenv().IronSoulLoadRaw
 
@@ -25,12 +25,12 @@ local function getPatcher()
     assert(fn, err)
 
     local patcher = fn()
-    assert(type(patcher) == "function", "V61.13.3 combat patch loader unavailable")
+    assert(type(patcher) == "function", "V61.14 combat patch loader unavailable")
     return patcher
 end
 
 -- Keep an unredirected loader available to the wrappers so they can reuse the
--- proven underlying modules without recursively loading themselves.
+-- proven underlying transition/watchdog modules without recursion.
 getgenv().IronSoulDependencyBaseLoadRaw = originalLoadRaw
 
 local function routedLoadRaw(path)
@@ -75,12 +75,11 @@ local ok, result = pcall(function()
             "systems/patches/combat_v61_9_unknown_objective.patch",
             "systems/patches/combat_v61_10_objective_scope_hotfix.patch",
             "systems/patches/combat_v61_11_1_region_egg_bridge.patch",
+            "systems/patches/combat_v61_14_world1_tween_open_gate.patch",
         },
     })
 end)
 
--- Restore the normal loader after module construction. The wrappers have
--- already captured the base loader/factory they need.
 getgenv().IronSoulLoadRaw = originalLoadRaw
 
 if not ok then
