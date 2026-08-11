@@ -25,7 +25,30 @@
              then
                  row.RegionDistance =
                      regionDist
-@@ -4089,15 +4104,90 @@
+@@ -3538,6 +3553,21 @@
+                         .. string.format(
+                             "%.2f",
+                             dist
+                         )
+                 )
+ 
++                -- V61.14.3 portal-arm settle:
++                -- do not race straight through a portal the same instant it
++                -- becomes eligible. The user observed that the fast tween can
++                -- otherwise end up just beyond the portal without triggering.
++                -- Wait only on the first handshake attempt; retries stay fast.
++                if attempts == 1 then
++                    portalLog(
++                        "PORTAL_ARM_SETTLE seconds=0.60"
++                    )
++
++                    task.wait(0.60)
++                end
++
+                 -- Enter the exact small RoundDoor.Portal volume.
+                 -- Unlike old versions, this is NOT a generic Workspace.Portal.
+                 for _, offset in ipairs({
+@@ -4089,15 +4119,90 @@
      local y =
          doorPos.Y
  
@@ -122,7 +145,7 @@
  
      local promptDist =
          (
-@@ -4221,42 +4311,99 @@
+@@ -4221,42 +4326,99 @@
      UsedDoorRoots[
          frozenRoot
      ] = true
