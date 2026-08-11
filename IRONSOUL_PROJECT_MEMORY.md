@@ -17,30 +17,43 @@
 - Pet Fortify/StarUp/SkillUp was mapped; spend only when mats/dupes justify it.
 - Task/daily pieces, Sword skills, attributes and Season/Lottery pieces were previously validated.
 
-## Fresh Lobby recon — critical facts
-Recon `FULL_LOBBY_RECON_R1` on a fresh account proved:
-- `DataUtil:GetPlayerData(Player)` already returned a table.
-- `Loaded=true`.
-- `LG_PowerNew1=110`.
-- **`LG_Level=nil` stayed nil throughout the full watch.**
-- Authoritative level exists at `PlayerData.LevelData.Level=1`, `XP=0`.
-- Starter equipment: only `Single_BroadSword`, Fortify 1.
-- Pets owned/equipped: empty.
-- World clears/unlocks: empty.
-- Current main guide/task: `Main_001`.
-- SeasonTicket=1; other early currencies mostly 0.
+## Fresh Lobby truth
+Fresh recon proved:
+- `DataUtil:GetPlayerData(Player)` can be ready with `Loaded=true` and `LG_PowerNew1` while `LG_Level=nil` permanently.
+- Real fresh level is `PlayerData.LevelData.Level` (observed Level 1).
+- Never require `LG_Level` alone.
+- V61.13.2 preflight resolves PlayerData level, then locally mirrors verified level to `LG_Level` only for compatibility with the older proven lobby body. Do not create another fresh-level lobby patch.
 
-Therefore never gate fresh lobby readiness on `LG_Level` alone. Current V61.13.1 lobby uses PlayerData level fallback both in preflight and the proven lobby body.
+## FIRST CLEAN FRESH-ACCOUNT 24/7 CYCLE — 2026-08-11
+Fresh account successfully completed:
+`Lobby -> World1 D1 -> settlement -> Lobby -> launch next World1 run`.
+Evidence:
+- first battle elapsed 176.89s;
+- 157 targets;
+- GateSuccess 5 / GateFail 0;
+- WatchdogStarts 0;
+- deaths 0;
+- PlayerHits 1 / PlayerDamage 4;
+- all 5 transitions `NEW_REGION_FAST`;
+- settlement reached;
+- return Lobby readiness passed in 3.40s at Level 3 / Power 138;
+- next planner decision `REPEAT_STORY`, World1 D1, then second dungeon launched.
+`REPEAT_STORY` is intentional when next Story exists but account is below its recommended Level/Power; do not force advance.
 
-## Recon-exposed systems worth learning later
-- Equipment: `FortifyUtil.Fortify`, `EnchantmentUtil.CreateEnchantmentSlot/GetEquippedEnchantments`.
+## Forge status
+- Active lobby chain remains V61.6 -> V61.7 reserve-best-ore -> V61.8 forge metrics.
+- First clean fresh cycle did NOT trigger smart-forge maintenance (no forge history/status file), so it is not a new forge validation.
+- Previously validated headless forge remains preserved; do not retune unless a real forge run fails.
+
+## Recon-exposed systems worth learning next
+- Equipment: `FortifyUtil.Fortify`, `EnchantmentUtil.Enchant/UnEnchant/GetEnchantCost/GetEquippedEnchantments`.
 - Pets: `PetsUtil`, `PetsHatchUtil`, `PetsFortifyUtil`, `PetsUpgradeUtil`.
 - Honor: `HonorLotteryUtil`, HonorStore.
 - Season: SeasonUtil / SeasonLotteryUtil / Season shop data.
 - Shops: ConsumableShopUtil, GoldShop/BondShop state.
 - Tasks/dailies: TaskUtil, DailyQuestUtil, SevenDailyUtil, DailyLoginUtil.
 - Skills/attributes: SkillTreeUtil, AttributeUpgradeUtil.
-These names/APIs are discovery evidence, not permission to spend blindly. Validate action protocol + spending rule before enabling 24/7 mutations.
+These APIs are discovery evidence, not permission to spend blindly. Validate protocol + spending rule before enabling 24/7 mutations.
 
 ## Headless rules
 - APIs/remotes/modules/server state first.
@@ -49,10 +62,10 @@ These names/APIs are discovery evidence, not permission to spend blindly. Valida
 - Helpers fail closed and must never kill combat.
 - Diagnostics are standalone downloadable **`.lua`** files from chat; outputs/logs may be `.txt` inside ZIPs.
 
-## World2 facts retained while frozen
+## World2 retained while frozen
 - D1 `136216144170036`, MaxRound 6, PortalD exists.
 - Many props have DestructibleObject/HitCount; that alone never proves progression.
 - Do not restore random scenery attacks or far/learned portal skipping.
 
-## Next verification
-Use the same normal loader on the fresh account. Confirm V61.13.1 resolves **Lv1 via `PlayerData.LevelData.Level`**, enters lobby logic, performs only already-proven safe maintenance, launches the first valid World1 story run, and returns to Lobby. Send the normal logs afterward. Only then expand Fortify/Enchant/Pet growth/Honor/shops one subsystem at a time from evidence.
+## Next
+Keep current World1 loop untouched. Deep-map lobby mutation protocols/costs for **Equipment Fortify + Enchant first**, then add only conservative, evidence-backed spending. After that: Pet growth -> Honor/Glory -> shops -> Blessing.
