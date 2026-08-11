@@ -11,10 +11,10 @@ local RunService = game:GetService("RunService")
 
 local Motion = {}
 
-Motion.DEFAULT_SPEED = 210       -- studs/sec
-Motion.FAR_SPEED = 260           -- studs/sec for long exact-portal approach
+Motion.DEFAULT_SPEED = 210       -- studs/sec, normal gate/portal travel
+Motion.FAR_SPEED = 260           -- studs/sec, long empty-corridor traversal
 Motion.MIN_TIME = 0.07
-Motion.MAX_TIME = 0.90
+Motion.MAX_TIME = 1.60           -- lets 300-400+ stud travel visibly glide
 
 local function clamp(v, lo, hi)
     if v < lo then return lo end
@@ -73,7 +73,8 @@ function Motion.Move(root, targetCFrame, opts)
         local elapsed = os.clock() - started
         local alpha = duration > 0 and math.min(1, elapsed / duration) or 1
 
-        -- SmoothStep: still quick, but visually floats instead of jerking.
+        -- SmoothStep gives the familiar floating/tween farm look without
+        -- engaging Roblox's walking controller or animations.
         local eased = alpha * alpha * (3 - 2 * alpha)
 
         root.CFrame = start:Lerp(targetCFrame, eased)
@@ -110,5 +111,9 @@ function Motion.MoveToPosition(root, position, lookAt, opts)
 
     return Motion.Move(root, target, opts)
 end
+
+-- Combat patches/wrappers can reuse the already-loaded helper without
+-- repeatedly fetching/compiling it during a 24/7 session.
+getgenv().IronSoulWorld1Motion = Motion
 
 return Motion
