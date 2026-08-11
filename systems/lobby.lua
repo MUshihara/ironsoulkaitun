@@ -4,6 +4,9 @@
 -- when the historical LG_Level client mirror never appears. Resolve readiness
 -- from PlayerData, then install a LOCAL compatibility mirror before loading the
 -- already-proven lobby body. No extra lobby diff is needed for this.
+--
+-- V61.17 addition: after PlayerData readiness, resolve any pending Cave reward
+-- audit in Lobby where material replication is authoritative.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -161,6 +164,19 @@ if LocalPlayer:GetAttribute("LG_Level") == nil and tonumber(finalLevel) then
 end
 
 status("Lobby PlayerData ready | Lv" .. tostring(finalLevel) .. " via " .. tostring(finalLevelSource))
+
+-- Cave rewards can replicate too late to be measured reliably inside the Cave
+-- settlement frame. Resolve the pending baseline here, after authoritative Lobby
+-- PlayerData readiness, without delaying or changing the proven lobby planner.
+do
+    local loadRaw = getgenv().IronSoulLoadRaw
+    if type(loadRaw) == "function" then
+        local okAudit, auditResult = loadRaw("systems/cave_audit.lua")
+        if not okAudit then
+            status("Cave audit deferred | " .. tostring(auditResult))
+        end
+    end
+end
 
 -- Every cross-place continuation goes through the stable entry so 24/7 sessions
 -- automatically pick up future fixes instead of remaining pinned to an old boot.
