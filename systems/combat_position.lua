@@ -1,5 +1,6 @@
--- IRON SOUL - V61.7 COMBAT POSITION ENTRY
--- Applies boss-safe burst-lock positioning to immutable V61.4 combat_position.
+-- IRON SOUL - V61.8 COMBAT POSITION ENTRY
+-- Applies V61.7 burst-lock positioning plus V61.8 recovery hardening
+-- to immutable V61.4 combat_position.
 
 local function getPatcher()
     local loadRaw =
@@ -32,7 +33,7 @@ local function getPatcher()
     local patcher = fn()
     assert(
         type(patcher) == "function",
-        "V61.7 combat position patch loader unavailable"
+        "V61.8 combat position patch loader unavailable"
     )
 
     return patcher
@@ -44,5 +45,6 @@ return getPatcher()({
     path = "systems/combat_position.lua",
     patch_paths = {
         "systems/patches/combat_position_v61_7_burst_lock.patch",
+        "systems/patches/combat_position_v61_8_burst_safe.patch",
     },
 })
