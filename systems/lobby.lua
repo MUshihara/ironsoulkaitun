@@ -1,6 +1,9 @@
--- IRON SOUL - V61.13.1 24/7 LOBBY PREFLIGHT
--- Fresh-account truth: PlayerData.LevelData.Level may exist while LG_Level stays nil.
--- Wait for real DataUtil/PlayerData readiness, then run the proven lobby body.
+-- IRON SOUL - V61.13.2 24/7 LOBBY PREFLIGHT
+--
+-- Fresh-account recon proved PlayerData.LevelData.Level is authoritative even
+-- when the historical LG_Level client mirror never appears. Resolve readiness
+-- from PlayerData, then install a LOCAL compatibility mirror before loading the
+-- already-proven lobby body. No extra lobby diff is needed for this.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -14,12 +17,12 @@ local function status(text)
     if type(fn) == "function" then
         pcall(fn, text)
     end
-    print("[IronSoul Lobby V61.13.1]", text)
+    print("[IronSoul Lobby V61.13.2]", text)
 end
 
 local function writeReadiness(text)
     if type(writefile) == "function" then
-        pcall(writefile, "IronSoul_LobbyReadiness_V61_13_1.txt", tostring(text or ""))
+        pcall(writefile, "IronSoul_LobbyReadiness_V61_13_2.txt", tostring(text or ""))
     end
 end
 
@@ -121,7 +124,7 @@ while stableReady < 4 do
         lastReport = os.clock()
 
         writeReadiness(table.concat({
-            "Version=V61.13.1",
+            "Version=V61.13.2",
             "Elapsed=" .. string.format("%.2f", elapsed),
             "Ready=" .. tostring(ready),
             "StableChecks=" .. tostring(stableReady) .. "/4",
@@ -147,6 +150,16 @@ end
 
 getgenv().IronSoulResolvedLevel = finalLevel
 getgenv().IronSoulResolvedLevelSource = finalLevelSource
+
+-- Historical proven lobby code reads LG_Level in its own readiness/planner.
+-- Fresh accounts may never receive that client mirror, so provide the exact
+-- level we just read from authoritative PlayerData. This is a LOCAL compatibility
+-- mirror only; it does not mutate server PlayerData or spend/claim anything.
+if LocalPlayer:GetAttribute("LG_Level") == nil and tonumber(finalLevel) then
+    pcall(LocalPlayer.SetAttribute, LocalPlayer, "LG_Level", tonumber(finalLevel))
+    status("Fresh level compatibility | LG_Level=" .. tostring(finalLevel) .. " from " .. tostring(finalLevelSource))
+end
+
 status("Lobby PlayerData ready | Lv" .. tostring(finalLevel) .. " via " .. tostring(finalLevelSource))
 
 -- Every cross-place continuation goes through the stable entry so 24/7 sessions
@@ -200,10 +213,11 @@ local function getPatcher()
     local fn, err = loadstring(source)
     assert(fn, err)
     local patcher = fn()
-    assert(type(patcher) == "function", "V61.13.1 lobby patch loader unavailable")
+    assert(type(patcher) == "function", "V61.13.2 lobby patch loader unavailable")
     return patcher
 end
 
+-- Only the previously proven lobby patch chain remains active.
 return getPatcher()({
     repository = "MUshihara/ironsoulkaitun",
     base_commit = "1d47f7f50ec8ecd92bca691b17d586d6bdecfa55",
@@ -212,6 +226,5 @@ return getPatcher()({
         "systems/patches/lobby_v61_6.patch",
         "systems/patches/lobby_v61_7_reserve_best_ore.patch",
         "systems/patches/lobby_v61_8_forge_metrics.patch",
-        "systems/patches/lobby_v61_13_1_fresh_level.patch",
     },
 })
