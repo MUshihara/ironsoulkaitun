@@ -1,5 +1,6 @@
--- IRON SOUL - V61.6 TELEMETRY ENTRY
--- Applies the verified V61.6 telemetry patch to the immutable V61.5 source.
+-- IRON SOUL - V61.7 TELEMETRY ENTRY
+-- Applies V61.6 multi-match telemetry, scope hardening, and settlement finalization
+-- to the immutable telemetry source.
 
 local function getPatcher()
     local loadRaw =
@@ -32,7 +33,7 @@ local function getPatcher()
     local patcher = fn()
     assert(
         type(patcher) == "function",
-        "V61.6 patch loader unavailable"
+        "V61.7 telemetry patch loader unavailable"
     )
 
     return patcher
@@ -45,5 +46,6 @@ return getPatcher()({
     patch_paths = {
         "systems/patches/telemetry_v61_6.patch",
         "systems/patches/telemetry_v61_6_hotfix.patch",
+        "systems/patches/telemetry_v61_7_settlement_finalize.patch",
     },
 })
