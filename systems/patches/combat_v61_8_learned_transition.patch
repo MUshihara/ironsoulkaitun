@@ -65,7 +65,7 @@
      -- V61.1:
      -- Before waiting on portal objects, reproduce the tiny REAL movement
      -- that manually wakes some server-side transition/checkpoint triggers.
-@@ -9244,6 +9302,20 @@
+@@ -9245,6 +9303,20 @@
  --========================================================--
  -- FINAL CHECKPOINT
  --========================================================--
