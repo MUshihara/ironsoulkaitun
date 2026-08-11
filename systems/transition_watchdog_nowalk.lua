@@ -1,26 +1,27 @@
 --========================================================--
--- IRON SOUL - WORLD1 TWEEN WATCHDOG WRAPPER V61.14
+-- IRON SOUL - WORLD1 TWEEN WATCHDOG WRAPPER V61.14.3
 --
 -- Reuses the proven watchdog but intercepts World1 exact current-1 portals
 -- before any native Humanoid walking path. World1 uses fast floating CFrame
--- tween movement + touch + authoritative verification. World2 stays isolated.
+-- tween movement + a short pre-cross settle + touch + authoritative verify.
+-- World2 stays isolated.
 --========================================================--
 
 local baseLoadRaw =
     getgenv().IronSoulDependencyBaseLoadRaw
     or getgenv().IronSoulLoadRaw
 
-assert(type(baseLoadRaw) == "function", "V61.14 watchdog base loader unavailable")
+assert(type(baseLoadRaw) == "function", "V61.14.3 watchdog base loader unavailable")
 
 local ok, baseFactory = baseLoadRaw("systems/transition_watchdog.lua")
-assert(ok and type(baseFactory) == "function", "V61.14 base watchdog unavailable")
+assert(ok and type(baseFactory) == "function", "V61.14.3 base watchdog unavailable")
 
 local motionOk, Motion = baseLoadRaw("systems/world1_motion.lua")
-assert(motionOk and type(Motion) == "table", "V61.14 World1 motion unavailable")
+assert(motionOk and type(Motion) == "table", "V61.14.3 World1 motion unavailable")
 
 return function(D)
     local W = baseFactory(D)
-    assert(type(W) == "table", "V61.14 base watchdog build failed")
+    assert(type(W) == "table", "V61.14.3 base watchdog build failed")
 
     local baseRecover = W.Recover
 
@@ -149,6 +150,15 @@ return function(D)
         return nil
     end
 
+    local function portalSettleDelay()
+        local requested =
+            D.CFG
+            and tonumber(D.CFG.FAST_PORTAL_SETTLE)
+            or 0.60
+
+        return math.min(1.0, math.max(0.60, requested or 0.60))
+    end
+
     local function tweenPortal(row, oldRegion, reason)
         local r = root()
         if not r or not row or not row.Root or not row.Root.Parent then
@@ -205,6 +215,24 @@ return function(D)
         local early = evidence(beforeRound, beforeRegion)
         if early then return true, "WATCHDOG_TWEEN_" .. tostring(early) end
 
+        local settle = portalSettleDelay()
+        emit(
+            "WATCHDOG_TWEEN_PORTAL_SETTLE",
+            "seconds=" .. string.format("%.2f", settle)
+                .. " name=" .. tostring(row.Name)
+        )
+
+        task.wait(settle)
+
+        if not r.Parent or not portal.Parent then
+            return false, "WATCHDOG_PORTAL_CHANGED_DURING_SETTLE"
+        end
+
+        local afterSettle = evidence(beforeRound, beforeRegion)
+        if afterSettle then
+            return true, "WATCHDOG_TWEEN_" .. tostring(afterSettle)
+        end
+
         exactTouch(r, portal)
 
         Motion.MoveToPosition(
@@ -216,7 +244,7 @@ return function(D)
 
         exactTouch(r, portal)
 
-        local deadline = os.clock() + 1.05
+        local deadline = os.clock() + 1.20
         while os.clock() < deadline do
             task.wait(0.06)
             local hit = evidence(beforeRound, beforeRegion)
@@ -279,7 +307,6 @@ return function(D)
                 if okTween then return true, result end
             end
 
-            -- Do not fall back to the base native-walking local portal path.
             return false, "WORLD1_LOCAL_PORTAL_TWEEN_UNRESOLVED"
         end
 
