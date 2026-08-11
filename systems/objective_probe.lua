@@ -1,13 +1,15 @@
 --========================================================--
--- IRON SOUL - UNKNOWN OBJECTIVE PROBE / RESOLVER V61.9
+-- IRON SOUL - ROUTE-BLOCKER OBJECTIVE RESOLVER V61.12
 --
--- Used only after combat has no normal enemy/egg objective and progression
--- has stalled. It inventories nearby gate/wall/barrier-like objects, records
--- their replicated state, and only attacks a candidate when there is strong
--- evidence that it is a damageable progression object.
+-- Rule:
+--   enemies / eggs > exact current-round portal > real route blocker.
 --
--- No world coordinates are hardcoded. Failed attempts are bounded and fall
--- back to the existing transition watchdog.
+-- This module MUST NOT farm scenery just because it has HitCount.
+-- A destroyable can be attacked only when it is the FIRST collidable,
+-- tagged DestructibleObject physically blocking the route toward the
+-- authoritative current-round portal / wake region.
+--
+-- Object removal alone is NOT progression success.
 --========================================================--
 
 return function(D)
@@ -17,48 +19,27 @@ return function(D)
         game:GetService("CollectionService")
 
     local LastTry = -math.huge
+    local LastArchiveAt = -math.huge
     local ProbeSerial = 0
 
-    local NAME_WORDS = {
-        "gate",
-        "door",
-        "wall",
-        "barrier",
-        "barricade",
-        "seal",
-        "crystal",
-        "ice",
-        "rock",
-        "block",
-        "break",
-        "destroy",
-        "obstacle",
-    }
+    local TRY_COOLDOWN = 0.70
+    local ARCHIVE_COOLDOWN = 10.0
 
-    local HEALTH_KEYS = {
-        "Health",
-        "HP",
-        "Hp",
-        "HitPoint",
-        "HitPoints",
-        "CurrentHP",
-        "CurHP",
-        "Durability",
-    }
+    local LOCAL_PORTAL_HINT_MAX = 320
+    local BLOCKER_TARGET_MAX = 520
+    local BLOCKER_ATTACK_MAX = 150
 
-    local PROGRESS_KEYS = {
-        "HitDamage",
-        "DamageTaken",
-        "Progress",
-        "HitCount",
-    }
-
-    local TERMINAL_KEYS = {
-        "Broken",
-        "Destroyed",
-        "Opened",
-        "Open",
-        "Dead",
+    local SCENERY_NAMES = {
+        tree = true,
+        tree1 = true,
+        tree2 = true,
+        tree3 = true,
+        chest = true,
+        chest1 = true,
+        chest2 = true,
+        chest3 = true,
+        goldcoin = true,
+        icecrystal = true,
     }
 
     local function emit(name, detail)
@@ -67,9 +48,39 @@ return function(D)
         end
     end
 
+    local function root()
+        if type(D.getRoot) ~= "function" then
+            return nil
+        end
+
+        local ok, value = pcall(D.getRoot)
+        return ok and value or nil
+    end
+
+    local function currentRegion()
+        if type(D.getCurrentRegion) ~= "function" then
+            return nil
+        end
+
+        local ok, value = pcall(D.getCurrentRegion)
+        return ok and value or nil
+    end
+
+    local function gameRound()
+        if type(D.gameRound) ~= "function" then
+            return nil
+        end
+
+        local ok, value = pcall(D.gameRound)
+        return ok and tonumber(value) or nil
+    end
+
     local function fullName(obj)
         if type(D.fullName) == "function" then
-            return D.fullName(obj)
+            local ok, value = pcall(D.fullName, obj)
+            if ok then
+                return tostring(value)
+            end
         end
 
         if typeof(obj) ~= "Instance" then
@@ -81,394 +92,336 @@ return function(D)
                 return obj:GetFullName()
             end)
 
-        return ok and value or obj.Name
+        return ok and tostring(value) or tostring(obj.Name)
     end
 
-    local function rootPart(obj)
-        if not obj or not obj.Parent then
-            return nil
+    local function hasNormalObjective()
+        if type(D.hasNormalObjective) ~= "function" then
+            return false
         end
 
-        if obj:IsA("BasePart") then
-            return obj
-        end
-
-        if obj:IsA("Model") then
-            return obj.PrimaryPart
-                or obj:FindFirstChild("Root")
-                or obj:FindFirstChild("HumanoidRootPart")
-                or obj:FindFirstChildWhichIsA("BasePart", true)
-        end
-
-        return obj:FindFirstChildWhichIsA("BasePart", true)
+        local ok, value = pcall(D.hasNormalObjective)
+        return ok and value == true
     end
 
-    local function keywordScore(name)
-        local text = string.lower(tostring(name or ""))
-        local score = 0
-        local hits = {}
-
-        for _, word in ipairs(NAME_WORDS) do
-            if string.find(text, word, 1, true) then
-                score += 1
-                table.insert(hits, word)
-            end
+    local function settled()
+        if type(D.settlementDetected) ~= "function" then
+            return false
         end
 
-        return score, table.concat(hits, ",")
+        local ok, value = pcall(D.settlementDetected)
+        return ok and value == true
     end
 
-    local function numberAttribute(obj, keys)
-        if not obj then
-            return nil
-        end
-
-        for _, key in ipairs(keys) do
-            local value = obj:GetAttribute(key)
-            if type(value) == "number" then
-                return key, value, "ATTR"
-            end
-        end
-
-        return nil
-    end
-
-    local function numberValue(obj, keys)
-        if not obj then
-            return nil
-        end
-
-        local wanted = {}
-        for _, key in ipairs(keys) do
-            wanted[string.lower(key)] = true
-        end
-
-        local scanned = 0
-        for _, child in ipairs(obj:GetDescendants()) do
-            scanned += 1
-            if scanned > 160 then
-                break
-            end
-
-            if child:IsA("NumberValue")
-                or child:IsA("IntValue")
-            then
-                if wanted[string.lower(child.Name)] then
-                    return child.Name, child.Value, "VALUE", child
-                end
-            end
-        end
-
-        return nil
-    end
-
-    local function metric(obj)
-        if not obj or not obj.Parent then
-            return {
-                terminal = true,
-                key = "REMOVED",
-                value = 0,
-                direction = "DOWN",
-            }
-        end
-
-        for _, key in ipairs(TERMINAL_KEYS) do
-            local value = obj:GetAttribute(key)
-            if value == true then
-                return {
-                    terminal = true,
-                    key = key,
-                    value = true,
-                    direction = "BOOL",
-                }
-            end
-        end
-
-        local key, value, source, valueObj =
-            numberAttribute(obj, HEALTH_KEYS)
-
-        if not key then
-            key, value, source, valueObj =
-                numberValue(obj, HEALTH_KEYS)
-        end
-
-        if key then
-            return {
-                terminal = value <= 0,
-                key = key,
-                value = value,
-                source = source,
-                valueObj = valueObj,
-                direction = "DOWN",
-            }
-        end
-
-        key, value, source, valueObj =
-            numberAttribute(obj, PROGRESS_KEYS)
-
-        if not key then
-            key, value, source, valueObj =
-                numberValue(obj, PROGRESS_KEYS)
-        end
-
-        if key then
-            return {
-                terminal = false,
-                key = key,
-                value = value,
-                source = source,
-                valueObj = valueObj,
-                direction = "UP",
-            }
-        end
-
-        return nil
-    end
-
-    local function stateSummary(obj)
-        if not obj or not obj.Parent then
-            return "removed"
-        end
-
-        local rows = {}
-        local attrs = obj:GetAttributes()
-        local count = 0
-
-        for key, value in pairs(attrs) do
-            count += 1
-            if count > 20 then
-                table.insert(rows, "...")
-                break
-            end
-
-            table.insert(
-                rows,
-                tostring(key) .. "=" .. tostring(value)
-            )
-        end
-
-        table.sort(rows)
-        return table.concat(rows, ";")
-    end
-
-    local function interactionSummary(obj)
-        if not obj or not obj.Parent then
-            return "none", 0
-        end
-
-        local prompts = 0
-        local touches = 0
-        local remotes = 0
-        local humanoids = 0
-        local scanned = 0
-
-        for _, child in ipairs(obj:GetDescendants()) do
-            scanned += 1
-            if scanned > 220 then
-                break
-            end
-
-            if child:IsA("ProximityPrompt") then
-                prompts += 1
-            elseif child:IsA("TouchTransmitter") then
-                touches += 1
-            elseif child:IsA("RemoteEvent")
-                or child:IsA("RemoteFunction")
-            then
-                remotes += 1
-            elseif child:IsA("Humanoid") then
-                humanoids += 1
-            end
-        end
-
-        return string.format(
-            "prompt=%d touch=%d remote=%d humanoid=%d",
-            prompts,
-            touches,
-            remotes,
-            humanoids
-        ), humanoids, prompts, touches, remotes
-    end
-
-    local function scan(radius)
-        local root = D.getRoot()
-        if not root then
-            return {}
-        end
-
-        radius = tonumber(radius) or 220
-
-        local overlap = OverlapParams.new()
-        overlap.FilterType = Enum.RaycastFilterType.Exclude
-
-        local character = D.LocalPlayer
-            and D.LocalPlayer.Character
-
-        overlap.FilterDescendantsInstances =
-            character and {character} or {}
-
-        local ok, parts =
-            pcall(
-                workspace.GetPartBoundsInRadius,
-                workspace,
-                root.Position,
-                radius,
-                overlap
-            )
-
-        if not ok or type(parts) ~= "table" then
-            parts = {}
-        end
-
-        local seen = {}
+    local function portalRows()
+        local r = root()
+        local round = gameRound()
+        local folder = workspace:FindFirstChild("RoundDoor")
         local rows = {}
 
-        local function consider(obj, part)
-            if not obj
-                or not obj.Parent
-                or seen[obj]
-            then
-                return
-            end
-
-            seen[obj] = true
-
-            local p = rootPart(obj) or part
-            if not p then
-                return
-            end
-
-            local dist = (p.Position - root.Position).Magnitude
-            if dist > radius then
-                return
-            end
-
-            local nameScore, words =
-                keywordScore(obj.Name)
-
-            local m = metric(obj)
-            local interactions,
-                humanoids,
-                prompts,
-                touches,
-                remotes =
-                    interactionSummary(obj)
-
-            -- Normal enemies are already owned by combat.lua. Do not create
-            -- a second enemy controller here.
-            if humanoids > 0 then
-                return
-            end
-
-            local damageableAttr =
-                obj:GetAttribute("Damageable") == true
-                or obj:GetAttribute("CanDamage") == true
-                or obj:GetAttribute("Destructible") == true
-
-            local score =
-                nameScore * 18
-                + (m and 70 or 0)
-                + (damageableAttr and 80 or 0)
-                + prompts * 4
-                + touches * 3
-                + remotes * 6
-                - math.min(dist, 220) * 0.03
-
-            if nameScore > 0
-                or m
-                or damageableAttr
-                or prompts > 0
-                or touches > 0
-                or remotes > 0
-            then
-                table.insert(rows, {
-                    Object = obj,
-                    Part = p,
-                    Distance = dist,
-                    Score = score,
-                    NameScore = nameScore,
-                    Words = words,
-                    Metric = m,
-                    Damageable = damageableAttr,
-                    Interactions = interactions,
-                    Attributes = stateSummary(obj),
-                })
-            end
+        if not r or not round or not folder then
+            return rows
         end
 
-        for _, part in ipairs(parts) do
-            local current = part
-            for _ = 1, 4 do
-                if not current or current == workspace then
-                    break
-                end
+        for _, part in ipairs(folder:GetDescendants()) do
+            if part:IsA("BasePart")
+                and part.Name == "Root"
+                and part.Parent
+                and string.sub(tostring(part.Parent.Name), 1, 6) == "Portal"
+            then
+                local roundNum =
+                    tonumber(part:GetAttribute("RoundNum"))
 
-                consider(current, part)
-                current = current.Parent
+                if roundNum == round - 1 then
+                    table.insert(rows, {
+                        Root = part,
+                        Name = tostring(part.Parent.Name),
+                        RoundNum = roundNum,
+                        Distance = (part.Position - r.Position).Magnitude,
+                    })
+                end
             end
         end
 
         table.sort(rows, function(a, b)
-            if math.abs(a.Score - b.Score) > 0.01 then
-                return a.Score > b.Score
-            end
             return a.Distance < b.Distance
         end)
 
         return rows
     end
 
-    local function probeText(reason, age, rows)
-        local root = D.getRoot()
-        local region = D.getCurrentRegion()
+    local function currentWake()
+        local round = gameRound()
+        local r = root()
 
-        local out = {
-            "Version=V61.9",
-            "Reason=" .. tostring(reason),
-            "PlaceId=" .. tostring(game.PlaceId),
-            "GameRound=" .. tostring(D.gameRound()),
-            "Age=" .. tostring(age),
-            "PlayerPos=" .. tostring(root and root.Position),
-            "CurrentRegion=" .. tostring(region and fullName(region)),
-            "Candidates=" .. tostring(#rows),
-            "",
-        }
-
-        for i = 1, math.min(24, #rows) do
-            local row = rows[i]
-            local m = row.Metric
-
-            table.insert(
-                out,
-                string.format(
-                    "#%d score=%.1f dist=%.1f name=%s path=%s words=%s metric=%s:%s:%s damageable=%s %s attrs={%s}",
-                    i,
-                    row.Score,
-                    row.Distance,
-                    tostring(row.Object.Name),
-                    fullName(row.Object),
-                    tostring(row.Words),
-                    tostring(m and m.key),
-                    tostring(m and m.value),
-                    tostring(m and m.direction),
-                    tostring(row.Damageable),
-                    tostring(row.Interactions),
-                    tostring(row.Attributes)
-                )
-            )
+        if not round or not r then
+            return nil, nil
         end
 
-        return table.concat(out, "\n")
+        local worldEnemies =
+            workspace:FindFirstChild("WorldEnemys")
+
+        local folder =
+            worldEnemies
+            and worldEnemies:FindFirstChild("RoundWakeTouch")
+
+        if not folder then
+            return nil, nil
+        end
+
+        local exact =
+            folder:FindFirstChild(
+                "Round" .. tostring(round),
+                true
+            )
+
+        if exact and exact:IsA("BasePart") then
+            local localPos =
+                exact.CFrame:PointToObjectSpace(r.Position)
+
+            local half = exact.Size * 0.5
+
+            local dx =
+                math.max(math.abs(localPos.X) - half.X, 0)
+
+            local dy =
+                math.max(math.abs(localPos.Y) - half.Y, 0)
+
+            local dz =
+                math.max(math.abs(localPos.Z) - half.Z, 0)
+
+            local distance =
+                Vector3.new(dx, dy, dz).Magnitude
+
+            return exact, distance
+        end
+
+        return nil, nil
     end
 
-    local function archiveProbe(reason, age, rows)
+    local function progressionEvidence(
+        beforeRound,
+        beforeRegion
+    )
+        if settled() then
+            return "SETTLEMENT"
+        end
+
+        if hasNormalObjective() then
+            return "OBJECTIVE_APPEARED"
+        end
+
+        local nowRound = gameRound()
+
+        if beforeRound
+            and nowRound
+            and nowRound ~= beforeRound
+        then
+            return "GAME_ROUND_CHANGED"
+        end
+
+        local nowRegion = currentRegion()
+
+        if beforeRegion
+            and nowRegion
+            and nowRegion ~= beforeRegion
+        then
+            return "REGION_CHANGED"
+        end
+
+        return nil
+    end
+
+    local function taggedDestructibleAncestor(instance)
+        local current = instance
+
+        while current and current ~= workspace do
+            local ok, tagged =
+                pcall(
+                    CollectionService.HasTag,
+                    CollectionService,
+                    current,
+                    "DestructibleObject"
+                )
+
+            if ok and tagged then
+                return current
+            end
+
+            current = current.Parent
+        end
+
+        return nil
+    end
+
+    local function isExplicitScenery(obj)
+        if not obj then
+            return true
+        end
+
+        local low =
+            string.lower(tostring(obj.Name or ""))
+
+        if SCENERY_NAMES[low] then
+            return true
+        end
+
+        local dropLoot =
+            obj:GetAttribute("DropLootId")
+
+        if dropLoot ~= nil
+            and tostring(dropLoot) ~= ""
+        then
+            return true
+        end
+
+        return false
+    end
+
+    local function firstRouteBlocker(targetPart)
+        local r = root()
+
+        if not r
+            or not targetPart
+            or not targetPart.Parent
+        then
+            return nil, "NO_ROUTE_TARGET"
+        end
+
+        local targetPos = targetPart.Position
+        local total = targetPos - r.Position
+        local distance = total.Magnitude
+
+        if distance < 4 then
+            return nil, "TARGET_ALREADY_NEAR"
+        end
+
+        if distance > BLOCKER_TARGET_MAX then
+            return nil, "TARGET_TOO_FAR"
+        end
+
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.IgnoreWater = true
+
+        local excluded = {}
+
+        if D.LocalPlayer and D.LocalPlayer.Character then
+            table.insert(excluded, D.LocalPlayer.Character)
+        end
+
+        local direction = total
+
+        for _ = 1, 18 do
+            params.FilterDescendantsInstances = excluded
+
+            local result =
+                workspace:Raycast(
+                    r.Position,
+                    direction,
+                    params
+                )
+
+            if not result or not result.Instance then
+                return nil, "ROUTE_CLEAR"
+            end
+
+            local hit = result.Instance
+            local blocker =
+                taggedDestructibleAncestor(hit)
+
+            if blocker then
+                local blockerDistance =
+                    (result.Position - r.Position).Magnitude
+
+                if hit:IsA("BasePart")
+                    and hit.CanCollide == true
+                    and blockerDistance <= BLOCKER_ATTACK_MAX
+                    and not isExplicitScenery(blocker)
+                then
+                    return {
+                        Object = blocker,
+                        HitPart = hit,
+                        HitPosition = result.Position,
+                        Distance = blockerDistance,
+                        Target = targetPart,
+                        TargetDistance = distance,
+                    }
+                end
+
+                table.insert(excluded, blocker)
+            else
+                if hit:IsA("BasePart")
+                    and (
+                        hit.CanCollide == false
+                        or hit.Transparency >= 0.98
+                    )
+                then
+                    table.insert(excluded, hit)
+                else
+                    return nil,
+                        "SOLID_NON_DESTRUCTIBLE:"
+                            .. fullName(hit)
+                end
+            end
+        end
+
+        return nil, "RAY_LIMIT"
+    end
+
+    local function progressMetric(obj)
+        if not obj or not obj.Parent then
+            return nil
+        end
+
+        for _, key in ipairs({
+            "HitCount",
+            "HitDamage",
+            "DamageTaken",
+            "Progress",
+            "Health",
+            "HP",
+            "Durability",
+        }) do
+            local value = obj:GetAttribute(key)
+
+            if type(value) == "number" then
+                return key, value
+            end
+        end
+
+        return nil
+    end
+
+    local function archive(
+        reason,
+        detail
+    )
+        local now = os.clock()
+
+        if now - LastArchiveAt < ARCHIVE_COOLDOWN then
+            return
+        end
+
+        LastArchiveAt = now
         ProbeSerial += 1
-        local text = probeText(reason, age, rows)
+
+        local r = root()
+
+        local text =
+            table.concat({
+                "Version=V61.12",
+                "Reason=" .. tostring(reason),
+                "PlaceId=" .. tostring(game.PlaceId),
+                "GameRound=" .. tostring(gameRound()),
+                "PlayerPos=" .. tostring(r and r.Position),
+                tostring(detail or ""),
+            }, "\n")
 
         if type(writefile) == "function" then
             pcall(
                 writefile,
-                "IronSoul_LastObjectiveProbe_V61_9.txt",
+                "IronSoul_LastObjectiveProbe_V61_12.txt",
                 text
             )
         end
@@ -485,163 +438,140 @@ return function(D)
                 string.format(
                     "ObjectiveProbe_%03d_R%s.txt",
                     ProbeSerial,
-                    tostring(D.gameRound())
+                    tostring(gameRound())
                 ),
                 text
             )
         end
     end
 
-    local function validAttackCandidate(row)
+    local function attackBlocker(row)
         if not row
             or not row.Object
             or not row.Object.Parent
-            or not row.Part
-            or not row.Part.Parent
+            or not row.HitPart
+            or not row.HitPart.Parent
         then
-            return false
+            return false, "BLOCKER_INVALID"
         end
 
-        if row.Distance > 190 then
-            return false
+        local r = root()
+
+        if not r then
+            return false, "NO_ROOT"
         end
 
-        if row.Metric then
-            return true
-        end
-
-        if row.Damageable then
-            return true
-        end
-
-        -- Soft fallback for a strongly named progression barrier that also
-        -- exposes an interaction/touch/remote mechanism. This is deliberately
-        -- stricter than name-only matching so decorative ice walls are ignored.
-        if row.NameScore >= 1
-            and row.Score >= 24
-            and string.find(
-                row.Interactions,
-                "prompt=0 touch=0 remote=0",
-                1,
-                true
-            ) == nil
-        then
-            return true
-        end
-
-        return false
-    end
-
-    local function progressChanged(before, after)
-        if not before or not after then
-            return false
-        end
-
-        if before.key ~= after.key
-            or before.direction ~= after.direction
-        then
-            return false
-        end
-
-        if before.direction == "DOWN" then
-            return after.value < before.value
-        elseif before.direction == "UP" then
-            return after.value > before.value
-        end
-
-        return false
-    end
-
-    local function positionFor(part)
-        local root = D.getRoot()
-        if not root or not part or not part.Parent then
-            return false
-        end
-
-        local delta = root.Position - part.Position
-        local horizontal = Vector3.new(delta.X, 0, delta.Z)
-
-        if horizontal.Magnitude < 0.1 then
-            horizontal = -Vector3.new(
-                part.CFrame.LookVector.X,
-                0,
-                part.CFrame.LookVector.Z
-            )
-        end
-
-        if horizontal.Magnitude < 0.1 then
-            horizontal = Vector3.new(0, 0, 1)
-        else
-            horizontal = horizontal.Unit
-        end
-
-        local goal = part.Position
-            + horizontal * 5.0
-            + Vector3.new(0, 1.5, 0)
-
-        root.CFrame = CFrame.lookAt(goal, part.Position)
-
-        pcall(function()
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-        end)
-
-        return true
-    end
-
-    local function attack(row)
+        local beforeRound = gameRound()
+        local beforeRegion = currentRegion()
         local obj = row.Object
-        local part = row.Part
-        local startRound = D.gameRound()
+
+        local metricKey, metricValue =
+            progressMetric(obj)
+
         local started = os.clock()
         local lastProgress = started
-        local before = metric(obj)
         local sawProgress = false
-        local initialCollision = part and part.CanCollide
 
         emit(
-            "OBJECTIVE_ATTACK_START",
-            "name=" .. tostring(obj.Name)
-                .. " path=" .. fullName(obj)
-                .. " dist=" .. string.format("%.1f", row.Distance)
-                .. " metric=" .. tostring(before and before.key)
-                .. ":" .. tostring(before and before.value)
+            "OBJECTIVE_ROUTE_BLOCKER_START",
+            "name="
+                .. tostring(obj.Name)
+                .. " path="
+                .. fullName(obj)
+                .. " dist="
+                .. string.format("%.1f", row.Distance)
+                .. " target="
+                .. fullName(row.Target)
+                .. " targetDist="
+                .. string.format("%.1f", row.TargetDistance)
         )
 
-        while os.clock() - started < 3.6 do
-            if D.settlementDetected() then
-                return true, "SETTLEMENT"
+        while os.clock() - started < 4.2 do
+            local evidence =
+                progressionEvidence(
+                    beforeRound,
+                    beforeRegion
+                )
+
+            if evidence then
+                return true, evidence
             end
 
-            local nowRound = D.gameRound()
-            if startRound and nowRound and nowRound > startRound then
-                return true, "ROUND_ADVANCED"
+            if not obj.Parent then
+                local deadline = os.clock() + 0.65
+
+                while os.clock() < deadline do
+                    task.wait(0.08)
+
+                    evidence =
+                        progressionEvidence(
+                            beforeRound,
+                            beforeRegion
+                        )
+
+                    if evidence then
+                        return true, evidence
+                    end
+                end
+
+                emit(
+                    "OBJECTIVE_ROUTE_BLOCKER_REMOVED_NO_PROGRESS",
+                    "name=" .. tostring(obj.Name)
+                )
+
+                return false,
+                    "BLOCKER_REMOVED_NO_PROGRESSION"
             end
 
-            if type(D.hasNormalObjective) == "function"
-                and D.hasNormalObjective()
-            then
+            if hasNormalObjective() then
                 return true, "OBJECTIVE_APPEARED"
             end
 
-            if not obj.Parent
-                or not part.Parent
-            then
-                return true, "OBJECT_REMOVED"
+            local liveRoot = root()
+
+            if not liveRoot then
+                return false, "NO_ROOT"
             end
 
-            local nowMetric = metric(obj)
-            if nowMetric and nowMetric.terminal then
-                return true, "OBJECTIVE_TERMINAL_" .. tostring(nowMetric.key)
-            end
+            local hitPos =
+                row.HitPart.Parent
+                and row.HitPart.Position
+                or row.HitPosition
 
-            if initialCollision == true
-                and part.CanCollide == false
-            then
-                return true, "COLLISION_OPENED"
-            end
+            if hitPos then
+                local delta =
+                    liveRoot.Position - hitPos
 
-            positionFor(part)
+                local horizontal =
+                    Vector3.new(
+                        delta.X,
+                        0,
+                        delta.Z
+                    )
+
+                if horizontal.Magnitude < 0.1 then
+                    horizontal =
+                        -Vector3.new(
+                            row.HitPart.CFrame.LookVector.X,
+                            0,
+                            row.HitPart.CFrame.LookVector.Z
+                        )
+                end
+
+                if horizontal.Magnitude < 0.1 then
+                    horizontal = Vector3.new(0, 0, 1)
+                else
+                    horizontal = horizontal.Unit
+                end
+
+                local goal =
+                    hitPos
+                    + horizontal * 5
+                    + Vector3.new(0, 1.5, 0)
+
+                liveRoot.CFrame =
+                    CFrame.lookAt(goal, hitPos)
+            end
 
             if type(D.skillReady) == "function"
                 and type(D.castSkill) == "function"
@@ -657,119 +587,187 @@ return function(D)
                 pcall(D.sendHeadlessAttack)
             end
 
-            if before and nowMetric
-                and progressChanged(before, nowMetric)
+            local newKey, newValue =
+                progressMetric(obj)
+
+            if metricKey
+                and newKey == metricKey
+                and type(metricValue) == "number"
+                and type(newValue) == "number"
+                and newValue ~= metricValue
             then
                 sawProgress = true
                 lastProgress = os.clock()
 
                 emit(
-                    "OBJECTIVE_DAMAGE",
-                    tostring(nowMetric.key)
-                        .. " " .. tostring(before.value)
-                        .. "->" .. tostring(nowMetric.value)
+                    "OBJECTIVE_ROUTE_BLOCKER_DAMAGE",
+                    tostring(metricKey)
+                        .. " "
+                        .. tostring(metricValue)
+                        .. "->"
+                        .. tostring(newValue)
                 )
 
-                before = nowMetric
-            elseif nowMetric then
-                before = nowMetric
+                metricValue = newValue
+            elseif newKey then
+                metricKey = newKey
+                metricValue = newValue
             end
 
-            if os.clock() - lastProgress >= 1.65
-                and not sawProgress
+            if not sawProgress
+                and os.clock() - lastProgress >= 1.35
             then
-                break
+                return false,
+                    "NO_CONFIRMED_BLOCKER_DAMAGE"
             end
 
-            task.wait(0.12)
+            task.wait(0.11)
         end
 
         if sawProgress then
             return false, "DAMAGE_PROGRESS"
         end
 
-        return false, "NO_CONFIRMED_DAMAGE"
+        return false, "NO_CONFIRMED_BLOCKER_DAMAGE"
     end
 
     function R:TryResolve(reason, age)
         local now = os.clock()
 
-        if now - LastTry < 0.85 then
+        if now - LastTry < TRY_COOLDOWN then
             return false, "COOLDOWN"
         end
 
         LastTry = now
 
-        if type(D.hasNormalObjective) == "function"
-            and D.hasNormalObjective()
-        then
+        if hasNormalObjective() then
             return false, "NORMAL_OBJECTIVE_ACTIVE"
         end
 
-        local rows = scan(235)
-        archiveProbe(reason, age, rows)
+        local portals = portalRows()
+        local nearestPortal = portals[1]
 
-        emit(
-            "OBJECTIVE_PROBE",
-            "reason=" .. tostring(reason)
-                .. " round=" .. tostring(D.gameRound())
-                .. " candidates=" .. tostring(#rows)
-                .. " best=" .. tostring(rows[1] and rows[1].Object.Name)
-                .. " score=" .. tostring(rows[1] and string.format("%.1f", rows[1].Score))
-                .. " dist=" .. tostring(rows[1] and string.format("%.1f", rows[1].Distance))
-        )
-
-        local candidate = nil
-        for _, row in ipairs(rows) do
-            if validAttackCandidate(row) then
-                candidate = row
-                break
-            end
-        end
-
-        if candidate then
-            local ok, result = attack(candidate)
-
+        if nearestPortal
+            and nearestPortal.Distance <= LOCAL_PORTAL_HINT_MAX
+        then
             emit(
-                "OBJECTIVE_ATTACK_RESULT",
-                tostring(result)
+                "OBJECTIVE_DEFER_TO_PORTAL",
+                "name="
+                    .. tostring(nearestPortal.Name)
+                    .. " round="
+                    .. tostring(nearestPortal.RoundNum)
+                    .. " dist="
+                    .. string.format(
+                        "%.1f",
+                        nearestPortal.Distance
+                    )
             )
 
-            if ok then
-                return true, "OBJECTIVE_" .. tostring(result)
-            end
-
-            -- If real HP/progress moved, keep ownership in GATE/empty combat
-            -- and retry this objective shortly instead of wandering away.
-            if result == "DAMAGE_PROGRESS" then
-                return false, result
-            end
-        end
-
-        -- After a bounded discovery attempt, reuse the existing transition
-        -- recovery machinery. This prevents 30-60 second empty stalls when
-        -- the new mechanic is actually a touch/portal/checkpoint instead.
-        if tonumber(age) and tonumber(age) >= 5.5 then
             local watchdog =
                 getgenv().IronSoulTransitionWatchdog
 
             if watchdog
                 and type(watchdog.Recover) == "function"
+                and tonumber(age)
+                and tonumber(age) >= 0.75
             then
-                local recovered, result =
+                local ok, result =
                     watchdog:Recover(
-                        D.getCurrentRegion(),
-                        "UNKNOWN_OBJECTIVE_" .. tostring(reason)
+                        currentRegion(),
+                        "OBJECTIVE_DEFER_LOCAL_PORTAL"
                     )
 
-                if recovered then
+                if ok then
                     return true, tostring(result)
                 end
             end
+
+            return false, "KNOWN_LOCAL_PORTAL"
         end
 
-        return false,
-            candidate and "UNRESOLVED_CANDIDATE" or "NO_DAMAGEABLE_OBJECTIVE"
+        local wake, wakeDistance =
+            currentWake()
+
+        if not wake
+            or not wakeDistance
+            or wakeDistance <= 3
+            or wakeDistance > BLOCKER_TARGET_MAX
+        then
+            archive(
+                reason,
+                "No blocker target."
+                    .. "\nNearestPortal="
+                    .. tostring(
+                        nearestPortal
+                        and nearestPortal.Name
+                    )
+                    .. "@"
+                    .. tostring(
+                        nearestPortal
+                        and nearestPortal.Distance
+                    )
+                    .. "\nWake="
+                    .. tostring(
+                        wake
+                        and fullName(wake)
+                    )
+                    .. "@"
+                    .. tostring(wakeDistance)
+            )
+
+            return false, "NO_SAFE_BLOCKER_TARGET"
+        end
+
+        local blocker, blockerReason =
+            firstRouteBlocker(wake)
+
+        if not blocker then
+            archive(
+                reason,
+                "Wake="
+                    .. fullName(wake)
+                    .. "@"
+                    .. string.format("%.1f", wakeDistance)
+                    .. "\nRoute="
+                    .. tostring(blockerReason)
+            )
+
+            return false,
+                "NO_ROUTE_BLOCKER:"
+                    .. tostring(blockerReason)
+        end
+
+        archive(
+            reason,
+            "BLOCKER="
+                .. fullName(blocker.Object)
+                .. "\nHitPart="
+                .. fullName(blocker.HitPart)
+                .. "\nDistance="
+                .. tostring(blocker.Distance)
+                .. "\nTarget="
+                .. fullName(blocker.Target)
+        )
+
+        local ok, result =
+            attackBlocker(blocker)
+
+        emit(
+            "OBJECTIVE_ROUTE_BLOCKER_RESULT",
+            tostring(result)
+        )
+
+        if ok then
+            return true,
+                "OBJECTIVE_"
+                    .. tostring(result)
+        end
+
+        if result == "DAMAGE_PROGRESS" then
+            return false, "DAMAGE_PROGRESS"
+        end
+
+        return false, tostring(result)
     end
 
     return R
