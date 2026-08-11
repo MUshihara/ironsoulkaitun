@@ -6,48 +6,43 @@ Read this, then `IRONSOUL_PROJECT_MEMORY.md`, then inspect current repo. Long ch
 - 24/7 **fresh account -> end progression**.
 - **Headless/API-first:** remotes/modules/server state; no normal mouse/GUI clicking.
 - **World1 movement = fast smooth CFrame tween/floating, NOT Roblox walking.** Do not use `Humanoid:MoveTo`/`Humanoid:Move` for gate/portal traversal.
-- Tween toward the exact valid current transition, then settle about **0.60s before final portal touch/cross** so the server trigger can arm.
-- Fast only when authoritative state remains valid; movement/crossed-plane alone is never progression proof.
+- Tween toward exact/current progression, dwell about **0.60s before final portal touch/cross**, and require authoritative evidence.
+- Movement/crossed-plane/raw displacement alone is never progression proof.
 - Preserve proven World1 combat/forge unless evidence requires change.
-- Helpers fail closed; a diagnostic/recovery failure must not kill combat.
-- Temporary diagnostics are downloadable **`.lua`** files in chat; output/log files may be `.txt`.
+- Historical `combat.lua` is near Luau's local-register ceiling: substantial new logic belongs in external modules/wrappers.
+- Diagnostics are downloadable `.lua`; result/log files may be `.txt`.
 
 ## Fresh Lobby truth
 - Lobby `117533937949084` is the progression brain.
-- Fresh account may have `Loaded=true` and PlayerData ready while `LG_Level=nil` permanently.
-- Real level is `PlayerData.LevelData.Level`; never require `LG_Level` alone.
-- Handle level compatibility in preflight, not another late lobby patch.
+- Fresh PlayerData may be ready while `LG_Level=nil`; real level is `PlayerData.LevelData.Level`.
+- Handle this in preflight, not another lobby patch.
 
 ## Proven loop
-Fresh accounts have completed repeated `Lobby -> World1 -> settlement -> Lobby/replay -> next run` cycles through D1/D2/D3. World1 combat is baseline; do not casually retune it.
+Fresh accounts have progressed repeatedly through World1 D1/D2/D3. Normal World1 combat is baseline; do not casually retune it.
 
-## World1 traversal
-- Exact/current progression only; never chase historical wrong-round gates/portals.
-- Empty traversal may use an exact `GameRound-1` gate up to 650 studs only while no combat objective exists.
-- Known ~414-stud Round3 gate stall fixed by this exact-current far traversal rule.
-- Already-open gates tween through the proven ~41-stud checkpoint depth and require settlement/GameRound/new-region evidence.
-- Portal wrappers and direct section-portal handshake dwell ~0.60s before first final touch/cross.
-- **D3 boss rule:** successful order is `Round4 -> Round5 -> Round6 -> Round7 boss`. Round7 is correct boss area only when server `GameRound==7`.
-- A reused section Portal was proven to jump physically to Round7 while server was still GameRound5. Never accept raw >100-stud displacement as portal success.
-- Before ambiguous cross-section portal use, `world1_round_recovery.lua` follows/caches the wake matching the authoritative current `GameRound` and tween-routes there when far. New-region evidence must match `Round<GameRound>`.
-- Never generically force RoundPortal RF; it previously skipped rooms/state.
-- World2 remains frozen/isolated.
+## V61.15 dungeon routing
+- Use `systems/dungeon_route_mapper.lua` as the live place-aware route layer.
+- **World1 and World2 do NOT share one physical Workspace layout.** Every PlaceId/server has its own Workspace tree. They may share naming conventions, but never share coordinates or assume identical doors/portals.
+- Mapper discovers live `GameRound`, `RoundWakeTouch.RoundN`, Door/Portal* roots, RoundNum/Switch, objective appearance, and streamed transitions for the current PlaceId/World/Diff.
+- World1 active recovery; World2 discovery/logging only while World2 remains frozen.
+- If current-round wake exists, tween to it.
+- If server has advanced but current wake is not streamed, use the exact open `GameRound-1` gate as a frontier and bounded-probe farther beyond it until current wake/objective/current local portal appears.
+- Writes `IronSoul_DungeonRouteMap_V61_15.txt`; this is important future-chat evidence.
+- Wrong-round historical gates/portals remain rejected; bounded repeated route failure rebuilds through Lobby instead of hanging.
 
-## Settlement / inventory / replay — 24/7 rule
-- Do not wait a minute for native replay failure.
-- Equipment maintenance threshold is `INVENTORY_CLEAN_AT` (85).
-- Full/high inventory at settlement returns Lobby immediately and skips Play Again.
-- Replay windows are short/bounded; full/stuck replay vote returns Lobby in a few seconds.
-- Lobby return uses native `WorldUtil.RemoteEvent:FireServer("BackLobby")`, then TeleportService fallback if needed.
+## D3 route facts
+- Correct progression: `Round4 -> Round5 -> Round6 -> Round7 boss`.
+- A reused section Portal previously sent the character physically to Round7 while server was still Round5; raw >100-stud `PORTAL_MOVED` success is removed.
+- Latest evidence also proved `GameRound=7` can occur while **Round7 wake has not streamed yet**. Old code repeatedly crossed the open Round6 gate to 41 studs forever. V61.15 frontier probing handles this special streamed boss transition.
+- Round7 is correct only when authoritative `GameRound==7`.
 
-## Combat compiler constraint
-- Historical `systems/combat.lua` is near Luau's local-register ceiling.
-- Do not add substantial locals directly to that giant chunk. Put new logic in separate modules/wrappers; settlement patch is intentionally zero-new-local.
+## Settlement / replay
+- Inventory maintenance threshold 85; full/high inventory at settlement -> Lobby immediately.
+- Replay waits are short/bounded; stuck/full replay vote -> Lobby, not minute-long retry chains.
 
-## Lobby upgrade recon
-- `FortifyUtil.Fortify`: 3 args.
-- `EnchantmentUtil.Enchant`: 5 args; `UnEnchant`: 4 args.
-- Pet/Honor/Season/shop modules/remotes are live.
-- Exact Fortify/Enchant outbound tuple still needs validation before unattended spending.
+## Lobby upgrades
+- `FortifyUtil.Fortify` arity3.
+- `EnchantmentUtil.Enchant` arity5; `UnEnchant` arity4.
+- Exact unattended mutation tuple still needs validation before enabling spending.
 
 Repo is source of truth when chat memory conflicts.
