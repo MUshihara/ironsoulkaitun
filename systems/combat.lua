@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - FAST PORTAL + SURVIVAL COMBAT V61.4
+-- IRON SOUL - SELF-HEALING TRANSITION COMBAT V61.5
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -201,6 +201,11 @@ local CFG = {
     FAST_PORTAL_CROSS_DISTANCE = 12,
     FAST_PORTAL_SETTLE = 0.12,
     FAST_PORTAL_VERIFY = 1.55,
+
+    -- 24/7 transition watchdog.
+    TRANSITION_WATCHDOG = true,
+    TRANSITION_WATCHDOG_IDLE = 4.0,
+    TRANSITION_WATCHDOG_COOLDOWN = 3.5,
 
     -- Adaptive combat position.
     ADAPTIVE_COMBAT_POSITION = true,
@@ -3827,6 +3832,124 @@ do
     end
 end
 
+--========================================================--
+-- V61.5 SELF-HEALING TRANSITION WATCHDOG
+--
+-- Separate module:
+--   * scans ALL RoundDoor portal candidates
+--   * persists successful transition hints by Diff/GameRound
+--   * bounded checkpoint probing that always returns to its anchor on failure
+--========================================================--
+
+getgenv().IronSoulTransitionWatchdog =
+    nil
+
+do
+    local loadRaw =
+        getgenv().IronSoulLoadRaw
+
+    if CFG.TRANSITION_WATCHDOG
+        and type(loadRaw)
+            == "function"
+    then
+        local ok, factory =
+            loadRaw(
+                "systems/transition_watchdog.lua"
+            )
+
+        if ok
+            and type(factory)
+                == "function"
+        then
+            local builtOk,
+                built =
+                    pcall(
+                        factory,
+                        {
+                            CFG = CFG,
+
+                            LocalPlayer =
+                                LocalPlayer,
+
+                            getRoot =
+                                function()
+                                    return Root
+                                end,
+
+                            getCurrentRegion =
+                                function()
+                                    return CurrentCombatRegion
+                                end,
+
+                            gameRound =
+                                gameRound,
+
+                            nearestWakeRegion =
+                                nearestWakeRegion,
+
+                            boxDistance =
+                                boxDistance,
+
+                            fullName =
+                                fullName,
+
+                            hasCombatObjective =
+                                function()
+                                    return #liveEnemies() > 0
+                                        or currentDragonEgg()
+                                            ~= nil
+                                end,
+
+                            settlementDetected =
+                                settlementDetected,
+
+                            event =
+                                function(name, detail)
+                                    local telemetry =
+                                        getgenv().IronSoulTelemetry
+
+                                    if telemetry then
+                                        telemetry:
+                                            Event(
+                                                name,
+                                                detail
+                                            )
+                                    end
+
+                                    getgenv().IronSoulNavTrace(
+                                        tostring(name)
+                                            .. " "
+                                            .. tostring(
+                                                detail
+                                                or ""
+                                            )
+                                    )
+                                end,
+
+                            firetouchinterest =
+                                firetouchinterest,
+                        }
+                    )
+
+            if builtOk
+                and type(built)
+                    == "table"
+            then
+                getgenv().IronSoulTransitionWatchdog =
+                    built
+            else
+                important(
+                    "Transition watchdog init failed"
+                )
+            end
+        else
+            important(
+                "Transition watchdog load failed"
+            )
+        end
+    end
+end
+
 local function writePhaseAudit(
     route,
     completed,
@@ -6059,9 +6182,65 @@ while not stopReason do
                             end
                         end
 
-                        -- If there is no authoritative door and the character
-                        -- is already outside the room volume, walk toward the
-                        -- actual unlocked section portal instead of wandering.
+                        -- V61.5 24/7 recovery.
+                        --
+                        -- Run even when the player is still close to the old
+                        -- RoundWakeTouch volume. V61.4 proved a permanent
+                        -- stall can happen at only ~17 studs from Round4.
+                        if CFG.TRANSITION_WATCHDOG
+                            and emptyAge
+                                >= CFG.TRANSITION_WATCHDOG_IDLE
+                        then
+                            local watchdog =
+                                getgenv().IronSoulTransitionWatchdog
+
+                            if watchdog then
+                                local recovered,
+                                    recoveryResult =
+                                        watchdog:
+                                            Recover(
+                                                CurrentCombatRegion,
+                                                "EMPTY_COMBAT"
+                                            )
+
+                                if recovered then
+                                    portalsInvoked += 1
+
+                                    writePhaseAudit(
+                                        "TRANSITION_WATCHDOG",
+                                        completedRound,
+                                        recoveryResult
+                                    )
+
+                                    lockRegion(
+                                        "AFTER_TRANSITION_WATCHDOG"
+                                    )
+
+                                    CurrentCombatRound =
+                                        gameRound()
+
+                                    lastRound =
+                                        gameRound()
+                                        or lastRound
+
+                                    noLocalEnemySince =
+                                        nil
+
+                                    getgenv().IronSoulStagingState.NoEnemySince =
+                                        nil
+
+                                    getgenv().IronSoulEmptyTraversalState.Since =
+                                        nil
+
+                                    task.wait(0.22)
+
+                                    continue
+                                end
+                            end
+                        end
+
+                        -- Existing guided route remains a lower-priority
+                        -- fallback after the watchdog.
                         local currentRegionDist =
                             CurrentCombatRegion
                             and boxDistance(
