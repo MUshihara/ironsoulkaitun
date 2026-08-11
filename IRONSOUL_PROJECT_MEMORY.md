@@ -31,7 +31,7 @@ Known traversal fixes:
 - Normal GATE selection keeps old tight region rule; historical/wrong-round gates remain rejected.
 - Already-open gate recovery tweens full ~41 studs and requires settlement/GameRound/new-region evidence. `CROSSED_PLANE` alone is no longer success.
 
-## Settlement / replay / inventory — V61.14.3
+## Settlement / replay / inventory — V61.14.4
 Old replay path could wait ~8s UI + 12s signal + 15s remote + 15s retry + 15s vote before `NATIVE_SOLO_REPLAY_FAILED`. This is unacceptable for 24/7.
 
 Current rules:
@@ -43,6 +43,12 @@ Current rules:
 - Any bounded replay failure returns Lobby; do not use public same-PlaceId fallback.
 - `directLobby`: queue next boot, fire native `WorldUtil.RemoteEvent:FireServer("BackLobby")` almost immediately, wait ~2s for teleport confirmation, then use Lobby TeleportService fallback.
 - Lobby then performs smart cleanup/forge/equip/progression before launching the next solo run.
+
+### Luau local-register ceiling — DO NOT FORGET
+- `systems/combat.lua` is already extremely close to Luau's local-register limit.
+- V61.14.3 first fast-settlement patch caused compile failure: `Out of local registers` around patched line ~10155 because it added new top-level locals.
+- V61.14.4 corrected this by making the fast-settlement patch **zero-new-local**: timeout/threshold edits + inline checks, and top-level scratch uses `getgenv().IronSoulFastSettlementScratch` instead of local variables.
+- Future combat fixes should avoid adding locals to the giant combat chunk. Prefer existing locals, inline expressions, wrappers/modules, or small getgenv scratch state. Do not casually add another large combat patch.
 
 ## Forge
 - Lobby forge chain: V61.6 -> V61.7 reserve-best-ore -> V61.8 measured forge.
@@ -65,6 +71,7 @@ R3 found concrete system remotes (`EquipmentRE`, `ForgeRF`, `PetsRE`, Honor/Seas
 - DestructibleObject/HitCount alone never proves progression; do not restore scenery attacks/far portal skipping.
 
 ## Next
-1. Let a fresh account run several W1 cycles on V61.14.3. Verify portal logs include `PORTAL_ARM_SETTLE` / `TWEEN_PORTAL_SETTLE` and transitions still complete reliably.
-2. At settlement, verify full/high inventory goes straight Lobby; stuck replay vote returns Lobby in a few seconds, not ~1 minute.
-3. Then validate exact Fortify/Enchant mutation call protocol before conservative headless spending.
+1. Re-execute normal loader and confirm combat entry reports V61.14.4 / no patched compile error.
+2. Let fresh account run several W1 cycles. Verify 0.60s portal settle still completes reliably.
+3. At settlement, verify full/high inventory goes straight Lobby; stuck replay vote returns Lobby in a few seconds, not ~1 minute.
+4. Then validate exact Fortify/Enchant mutation call protocol before conservative headless spending.
