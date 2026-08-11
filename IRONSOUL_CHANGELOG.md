@@ -2,47 +2,59 @@
 
 Purpose: chronological record of important production changes, failures, and evidence. Future conversations should read this together with `IRONSOUL_PROJECT_MEMORY.md` before modifying the project.
 
+## 2026-08-11 - V61.11.3 local PortalD watchdog recovery
+### Evidence from supplied kaitun + targeted diagnostic ZIPs
+World2 D1 run `20260811_210919_136216144170036_fce19773_D1` cleared Round1 and reached authoritative `GameRound=2 / GameRoundComplete=1`, then remained in `GATE` for 170+ seconds with 0 enemies and no region-valid egg.
+
+The targeted post-crystal diagnostic showed the player at approximately `(-6389, 33, 687)` and a legitimate local `Workspace.RoundDoor.PortalD.Root` with `RoundNum=1` only ~20.6 studs away. A different literal `Workspace.RoundDoor.Portal.Root` with the same RoundNum remained ~1036 studs away.
+
+The match summary reported `WatchdogStarts=0`. The decisive evidence was `IronSoul_MobileStatus_V61_11.txt`:
+`Runtime failed | systems/transition_watchdog.lua | :196: patch hunk source not found near source line 408`.
+
+### Learned
+1. The no-boss-skip behavior in this run did NOT prove the V61.11.2 guard was active; the watchdog had failed to load entirely, which also prevented the old far-portal jump.
+2. World2 can use `PortalD` as the legitimate current-1 local RoundDoor transition. The historical watchdog only recognized parent name exactly `Portal`, so it could ignore the correct `PortalD` while seeing a far literal `Portal` copy.
+3. Safety should not be implemented as another late unified diff against the watchdog. Repeated patch-context failures are themselves a reliability problem.
+4. For recovery, known local current-1 RoundDoor portals outrank unknown-objective probing and far replicated copies.
+
+### Changed
+- Replaced the active V61.11.2 patched watchdog entry with V61.11.3 local-safe wrapper architecture.
+- Removed `watchdog_v61_11_2_progression_guard.patch` from the active watchdog patch chain.
+- Preserved the previously proven V61.6/V61.8 watchdog implementation underneath the wrapper.
+- Wrapper scans all current-1 RoundDoor roots whose parent name begins with `Portal`, including `PortalD` and future `Portal*` variants.
+- Local recovery limit is 220 studs.
+- Local portal crossing uses native Humanoid movement only; no far CFrame snap and no direct portal RF forcing.
+- Success requires settlement, objective appearance, GameRound change, or a genuinely new nearby RoundWakeTouch region. Raw displacement is not accepted by the wrapper.
+- If current-1 portals exist only far away, wrapper refuses recovery rather than delegating into the historical far-portal path.
+- Only when no current-1 RoundDoor portal exists at all does the wrapper delegate to the older learned-route / bounded-probe recovery.
+
+### Intentionally left untouched
+- Normal combat / boss positioning.
+- World2 objective probe logic.
+- World1 door traversal.
+- Forge, inventory, progression and mobile bootstrap behavior.
+
+### Expected verification
+After World2 Round1 becomes GameRound2, V61.11.3 should see the ~20-stud Round1 `PortalD`, walk through it naturally, obtain real progression evidence, and enter the legitimate next room. It must never choose the ~1000-stud literal Round1 `Portal` instead.
+
+### Status
+The watchdog load failure and local/far portal topology are proven. V61.11.3 local `PortalD` crossing is experimental until the next run.
+
 ## 2026-08-11 - V61.11.2 World2 boss-skip regression guard
 ### Evidence
 Standalone RAW_RECON_R3 captured World2 D1 after only the first stage was cleared. Authoritative server state was still `GameRound=2` / `GameRoundComplete=1`, but the player was already physically inside `Workspace.World.Room5` near the boss-side area.
 
-Kaitun nav history showed the sequence:
-- objective resolver correctly attacked `Workspace.World.Room1...crystal6`;
-- `crystal6` exposed `HitCount` / `PowerRate` and was tagged `DestructibleObject`;
-- the authoritative round advanced from 1 to 2 after the destructible crystal gate was handled;
-- empty traversal then called the transition watchdog;
-- watchdog selected a replicated Round1 portal more than 1,000 studs away;
-- watchdog CFramed near the remote portal, crossed it, and accepted `PORTAL_MOVED` (>100 stud displacement) as transition success;
-- the resulting bad route was persisted as a successful D1/R2 learned route;
-- the player bounced between the old Round1 portal area and Room5 while server GameRound remained 2.
+Kaitun nav history showed a replicated Round1 portal more than 1,000 studs away being used as recovery and raw displacement being accepted as `PORTAL_MOVED` success. That route could then contaminate persistent route learning.
 
 ### Learned
-1. World2 uses real destructible progression objects. `crystal6` / `DestructibleObject` with server-visible `HitCount` is a valid mechanic, not decoration.
-2. Destroying the barrier and advancing GameRound does not mean navigation to the next physical room is finished.
-3. A transition watchdog is a local recovery tool. It must never CFrame to a replicated current-1 portal hundreds/thousands of studs away.
-4. Raw displacement (`PORTAL_MOVED`) is not progression proof.
-5. Persistent route learning must not replay or advertise routes learned from displacement-only evidence.
+- A transition watchdog is a local recovery tool. It must never snap to a replicated current-1 portal hundreds/thousands of studs away.
+- Raw displacement (`PORTAL_MOVED`) is not sufficient progression proof.
 
-### Changed
-- Added `watchdog_v61_11_2_progression_guard.patch`.
-- Watchdog portal acquisition is capped at 220 studs.
-- Removed `PORTAL_MOVED` from transition success evidence.
-- Reject old learned routes whose result is `PORTAL_MOVED` or `CHARACTER_CHANGED`.
-- Reject the same unsafe results from `HasLearnedRoute()` so the combat fast path cannot advertise them as proven.
-- Prevent future unsafe results from being saved by `learnSuccess()`.
-- Kept the bounded local movement probes as the fallback when no safe local portal exists.
+### Attempted change
+A multi-hunk `watchdog_v61_11_2_progression_guard.patch` was added to enforce local-only portal acquisition and reject displacement-only learned routes.
 
-### Intentionally left untouched
-- World2 destructible-object resolver: the crystal gate detection/attack was correct and produced real GameRound progression.
-- Normal combat positioning/DPS.
-- Proven World1 exact-door and portal traversal logic.
-- Forge/inventory policy.
-
-### Expected verification
-After clearing World2 Round1, GameRound should become 2 and the character should remain on the local route instead of jumping to Room5. The watchdog should ignore far Round1 portals and use local traversal/probing. Boss-room entry should only occur when normal authoritative progression reaches it.
-
-### Status
-Root cause of the boss skip is proven by recon. Correct next-room local traversal behavior is still experimental until the next World2 run.
+### Later correction
+The next run proved this patch itself failed to load (`patch hunk source not found near source line 408`). The intended V61.11.2 guard was therefore not actually active. This implementation is superseded by V61.11.3's wrapper architecture, which avoids modifying the watchdog internals with another fragile late diff.
 
 ## 2026-08-11 - Diagnostic / continuity policy correction
 ### User preference
@@ -59,7 +71,7 @@ Production fixes stay in GitHub. Deep one-off diagnostics stay raw in chat. Upda
 
 ## 2026-08-11 - V61.11.1 combat hotfix
 ### Evidence
-Latest World2 D1 run reached Round4/CompletedRound3, then remained in GATE with 0 local/global enemies, no region-valid DragonEgg, no recognized doors, and no objective-probe events.
+World2 D1 reached Round4/CompletedRound3, then remained in GATE with 0 local/global enemies, no region-valid DragonEgg, no recognized doors, and no objective-probe events.
 
 ### Learned
 The V61.10 anti-nil shortcut used a direct `workspace.DragonEgg` check. That can see a stale/future egg outside the current combat branch and incorrectly tell the objective resolver that a normal objective is active.
@@ -70,42 +82,31 @@ The V61.10 anti-nil shortcut used a direct `workspace.DragonEgg` check. That can
 - Early objective resolver resolves this published function at runtime.
 - Removed dependency on global unfiltered DragonEgg presence.
 
-### Expected result
-World2 empty GATE states can reach objective probing even when another branch has a replicated DragonEgg.
-
 ## 2026-08-11 - V61.11 lobby/mobile stabilization
 ### Failure that triggered it
 `[IronSoul V61.10] Runtime failed | systems/lobby.lua | :196: patch hunk source not found near source line 342`
 
-### Learned
-Executor compatibility should not be another late diff against a heavily patched lobby source.
-
 ### Changed
 - Removed active `lobby_v61_10_mobile_executor.patch` from the lobby chain.
-- Lobby now uses only proven V61.6 balanced forge, V61.7 best-ore reserve, and V61.8 forge metrics patches.
+- Lobby uses only proven V61.6 balanced forge, V61.7 best-ore reserve, and V61.8 forge metrics patches.
 - `bootstrap_v61_11.lua` detects real executor teleport queue aliases before lobby loads.
-- Standard `queue_on_teleport` compatibility is normalized in bootstrap.
-- If no native queue exists, current-cycle progression can continue while HUD/status clearly marks manual re-execution mode.
-- Mobile status/capability logging kept in bootstrap.
+- Standard queue compatibility is normalized in bootstrap instead of patching lobby internals.
+- If no native queue exists, current-cycle progression can continue while HUD/status marks manual re-execution mode.
 - Tutorial route corrected to a versioned mobile-safe tutorial.
 
 ## 2026-08-11 - V61.10 combat scope hotfix
-### Failure that triggered it
+### Failure
 `[IronSoul V61.9] Runtime failed: systems/combat.lua | :4034: attempt to call a nil value`
 
 ### Cause
-V61.9 objective resolver was constructed before local `currentDragonEgg()` declaration and attempted to close over/use that name too early.
-
-### Changed
-- Replaced direct early reference with a self-contained objective check.
-- Nil-guarded optional nav/status callback.
+V61.9 objective resolver was constructed before local `currentDragonEgg()` declaration and attempted to use that name too early.
 
 ### Later correction
-The self-contained global DragonEgg check was too broad for multi-branch World2 and is superseded by V61.11.1's region-aware bridge.
+The first global DragonEgg workaround was too broad for multi-branch World2 and was superseded by V61.11.1's region-aware bridge.
 
 ## 2026-08-11 - V61.9 unknown-objective recovery
 ### Evidence
-World2 introduced empty progression states that did not look like normal RoundDoor transitions. A previous run could finish, while another stopped at a new icy gate/transition.
+World2 introduced empty progression states that did not look like normal RoundDoor transitions.
 
 ### Changed
 - Added bounded unknown-objective resolver.
@@ -113,7 +114,7 @@ World2 introduced empty progression states that did not look like normal RoundDo
 - Rank evidence using attributes, HP/progress values, prompts, touches, remotes, collision and distance.
 - Attack only when there is evidence of a real damageable progression object.
 - Require server-visible progress before continuing attacks.
-- Fall back to existing transition watchdog when no damageable objective is confirmed.
+- Fall back to transition recovery when no damageable objective is confirmed.
 
 ### Important rule
 Do not assume object names alone mean a gate is attackable.
