@@ -1,16 +1,16 @@
--- IRON SOUL - V61.14.5 COMBAT ENTRY
+-- IRON SOUL - V61.15 COMBAT ENTRY
 --
 -- Preserve the validated combat chain. World1 transition movement is smooth
 -- fast CFrame tween/floating movement: no Humanoid walking to/through gates
 -- or portals. Empty traversal may follow a FAR gate only when it is the exact
 -- current-1 gate, bounded to 650 studs. Already-open gates cross the full
 -- proven checkpoint depth and require authoritative progression evidence.
--- D3 cross-section recovery now follows the server-current Round wake before
--- touching an ambiguous reused section Portal, preventing premature boss jumps.
+-- D3 cross-section recovery follows server-current round state; V61.15 also
+-- preloads a place-aware live route mapper that learns wakes/doors/portals and
+-- can probe beyond the last valid open gate when the next round has not streamed.
 -- Settlement replay fails fast to Lobby when maintenance/replay is blocked.
--- IMPORTANT: fast-settlement patch adds zero new combat.lua locals because the
--- historical combat chunk is already at Luau's local-register ceiling.
--- World2 remains isolated/frozen.
+-- IMPORTANT: avoid adding locals to the historical combat chunk; it is already
+-- at Luau's local-register ceiling. World2 remains active-discovery-only/frozen.
 
 local originalLoadRaw = getgenv().IronSoulLoadRaw
 
@@ -33,17 +33,17 @@ local function getPatcher()
     assert(fn, err)
 
     local patcher = fn()
-    assert(type(patcher) == "function", "V61.14.5 combat patch loader unavailable")
+    assert(type(patcher) == "function", "V61.15 combat patch loader unavailable")
     return patcher
 end
 
--- Preload the shared World1 motion and authoritative current-round recovery
--- OUTSIDE the giant historical combat chunk. This avoids local-register pressure
--- inside patched combat.lua while still giving transition code a safe helper.
+-- Preload helpers OUTSIDE the giant historical combat chunk. This avoids
+-- local-register pressure inside patched combat.lua.
 if type(originalLoadRaw) == "function" then
     pcall(function()
         originalLoadRaw("systems/world1_motion.lua")
         originalLoadRaw("systems/world1_round_recovery.lua")
+        originalLoadRaw("systems/dungeon_route_mapper.lua")
     end)
 end
 
