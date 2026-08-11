@@ -1,8 +1,9 @@
--- IRON SOUL - V61.14 COMBAT ENTRY
+-- IRON SOUL - V61.14.1 COMBAT ENTRY
 --
--- Preserve the validated combat chain. World1 transition movement is now
--- smooth fast CFrame tween/floating movement: no Humanoid walking to/through
--- gates or portals. World2 remains isolated/frozen.
+-- Preserve the validated combat chain. World1 transition movement is smooth
+-- fast CFrame tween/floating movement: no Humanoid walking to/through gates
+-- or portals. Empty traversal may follow a FAR gate only when it is the exact
+-- current-1 gate, bounded to 650 studs. World2 remains isolated/frozen.
 
 local originalLoadRaw = getgenv().IronSoulLoadRaw
 
@@ -25,7 +26,7 @@ local function getPatcher()
     assert(fn, err)
 
     local patcher = fn()
-    assert(type(patcher) == "function", "V61.14 combat patch loader unavailable")
+    assert(type(patcher) == "function", "V61.14.1 combat patch loader unavailable")
     return patcher
 end
 
@@ -76,6 +77,7 @@ local ok, result = pcall(function()
             "systems/patches/combat_v61_10_objective_scope_hotfix.patch",
             "systems/patches/combat_v61_11_1_region_egg_bridge.patch",
             "systems/patches/combat_v61_14_world1_tween_open_gate.patch",
+            "systems/patches/combat_v61_14_far_traversal_tween.patch",
         },
     })
 end)
