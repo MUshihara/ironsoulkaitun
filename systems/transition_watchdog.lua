@@ -1,6 +1,7 @@
--- IRON SOUL - V61.8 TRANSITION WATCHDOG ENTRY
--- Applies the verified V61.6 watchdog, hardening hotfixes, and a read-only
--- learned-route readiness API used by the V61.8 post-door fast path.
+-- IRON SOUL - V61.11.2 TRANSITION WATCHDOG ENTRY
+-- Preserves verified watchdog learning/recovery, then adds a progression guard:
+-- recovery portals must be local, displacement alone is not success evidence,
+-- and old PORTAL_MOVED learned routes are rejected.
 
 local function getPatcher()
     local loadRaw =
@@ -33,7 +34,7 @@ local function getPatcher()
     local patcher = fn()
     assert(
         type(patcher) == "function",
-        "V61.8 transition watchdog patch loader unavailable"
+        "V61.11.2 transition watchdog patch loader unavailable"
     )
 
     return patcher
@@ -48,5 +49,6 @@ return getPatcher()({
         "systems/patches/watchdog_v61_6_1_hotfix.patch",
         "systems/patches/watchdog_v61_6_2_learning_guard.patch",
         "systems/patches/watchdog_v61_8_learned_fastpath.patch",
+        "systems/patches/watchdog_v61_11_2_progression_guard.patch",
     },
 })
