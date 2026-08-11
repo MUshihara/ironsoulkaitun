@@ -1,31 +1,34 @@
 # Iron Soul Kaitun — START HERE
 
-Read this file, then `IRONSOUL_PROJECT_MEMORY.md`, then inspect current repo.
-Long changelog is optional; use only to trace an old regression.
+Read this, then `IRONSOUL_PROJECT_MEMORY.md`, then inspect current repo. Long changelog is optional.
 
 ## Non-negotiable
-- 24/7 NEWBIE -> end progression.
-- **Headless/API-first:** remotes/modules/server state. No mouse/GUI clicking in normal automation.
-- Fast only when server state stays valid.
-- Preserve proven World1 combat/forge/traversal; do not casually retune it.
-- Enemy/DragonEgg outrank destructibles.
-- Never attack scenery because of `HitCount`/`DestructibleObject` alone.
-- Never chase far replicated portals or accept movement/object removal as progression proof.
-- Do not generically force RoundPortal RF; proven able to skip rooms/state.
-- Recovery/diagnostic helpers fail closed; never kill combat.
-- Diagnostics are standalone `.txt` from chat, not production repo.
+- 24/7 **fresh account -> end progression**.
+- **Headless/API-first:** remotes/modules/server state; no normal mouse/GUI clicking.
+- Fast only when authoritative state remains valid.
+- Preserve proven World1 combat/forge/traversal unless evidence requires change.
+- Helpers fail closed; a diagnostic/recovery failure must not kill combat.
+- Temporary diagnostics are standalone downloadable **`.lua`** files in chat, never production GitHub.
+
+## Fresh Lobby truth
+- Lobby `117533937949084` is the progression brain.
+- Fresh-account recon proved `DataUtil:GetPlayerData()` can be fully ready with `Loaded=true`, `LG_PowerNew1=110`, but **`LG_Level=nil` permanently**.
+- Real level is `PlayerData.LevelData.Level` (fresh recon: Level 1). Never require `LG_Level` alone.
+- Current lobby must wait/self-heal on slow data, then use PlayerData level fallback.
 
 ## Current priority
-**Freeze World2 tuning. Return to fresh account -> Tutorial -> Lobby -> World1.**
-Lobby is the progression brain and must be fully learned/validated before more World2 work.
+Freeze World2. Prove **Tutorial -> Lobby -> World1 -> Lobby** first, then expand lobby mechanics.
 
-## Lobby rule
-Slow fresh/mobile PlayerData must WAIT/SELF-HEAL, never permanently stop on a short timeout.
-Current lobby preflight waits for stable PlayerData + Loaded/Level/Power before running proven lobby logic and queues stable `bootstrap.lua` across teleports.
+## Safe architecture reminders
+- Enemy/DragonEgg before any destructible.
+- Never infer progression from HitCount/tag, object removal, or raw movement.
+- Never chase far replicated portals or generically force RoundPortal RF; both caused invalid skips.
+- Exact valid local portal + required native/touch handshake + server-state verification.
 
 ## Mechanic status
-- Proven: headless forge, EquipBest, smart cleanup, pets hatch/equip, tasks/dailies pieces, Sword skills, attributes, season/lottery pieces, World1 progression/matchmaking.
-- Pet growth Fortify/StarUp/SkillUp was mapped but previously disabled when mats/dupes were insufficient.
-- Blessing / Enchant / Merchant-vendor / Glory-Wheel-specific automation must be re-learned from the full lobby recon before production assumptions.
+- Proven baseline: headless forge, EquipBest/smart cleanup, pet hatch/equip, task/daily pieces, Sword skills, attributes, Season/Lottery pieces, World1 progression/matchmaking.
+- Pet Fortify/StarUp/SkillUp was mapped but should spend only when materials/duplicates justify it.
+- Fresh recon exposed `EnchantmentUtil`, `FortifyUtil`, `PetsFortifyUtil`, `PetsUpgradeUtil`, `HonorLotteryUtil`, shops, Season systems, etc.; action protocols/policies still need deliberate validation before 24/7 spending.
+- Blessing and any separate Glory Wheel mechanic are not considered mapped just from names.
 
 Repo is source of truth when chat memory conflicts.
