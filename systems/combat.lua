@@ -1,10 +1,12 @@
--- IRON SOUL - V61.14.4 COMBAT ENTRY
+-- IRON SOUL - V61.14.5 COMBAT ENTRY
 --
 -- Preserve the validated combat chain. World1 transition movement is smooth
 -- fast CFrame tween/floating movement: no Humanoid walking to/through gates
 -- or portals. Empty traversal may follow a FAR gate only when it is the exact
 -- current-1 gate, bounded to 650 studs. Already-open gates cross the full
 -- proven checkpoint depth and require authoritative progression evidence.
+-- D3 cross-section recovery now follows the server-current Round wake before
+-- touching an ambiguous reused section Portal, preventing premature boss jumps.
 -- Settlement replay fails fast to Lobby when maintenance/replay is blocked.
 -- IMPORTANT: fast-settlement patch adds zero new combat.lua locals because the
 -- historical combat chunk is already at Luau's local-register ceiling.
@@ -31,8 +33,18 @@ local function getPatcher()
     assert(fn, err)
 
     local patcher = fn()
-    assert(type(patcher) == "function", "V61.14.4 combat patch loader unavailable")
+    assert(type(patcher) == "function", "V61.14.5 combat patch loader unavailable")
     return patcher
+end
+
+-- Preload the shared World1 motion and authoritative current-round recovery
+-- OUTSIDE the giant historical combat chunk. This avoids local-register pressure
+-- inside patched combat.lua while still giving transition code a safe helper.
+if type(originalLoadRaw) == "function" then
+    pcall(function()
+        originalLoadRaw("systems/world1_motion.lua")
+        originalLoadRaw("systems/world1_round_recovery.lua")
+    end)
 end
 
 -- Keep an unredirected loader available to the wrappers so they can reuse the
