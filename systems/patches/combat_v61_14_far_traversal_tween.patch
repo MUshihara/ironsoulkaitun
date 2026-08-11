@@ -25,7 +25,71 @@
              then
                  row.RegionDistance =
                      regionDist
-@@ -3538,6 +3553,21 @@
+@@ -3378,17 +3393,12 @@
+     if not Root
+         or not Root.Parent
+     then
+         return "CHARACTER_CHANGED"
+     end
+ 
+-    if beforePos
+-        and (
+-            Root.Position
+-            - beforePos
+-        ).Magnitude > 100
+-    then
+-        return "PORTAL_MOVED"
+-    end
+-
+     local region,
+         dist =
+             nearestWakeRegion(
+                 Root.Position
+             )
+ 
+     if region
+         and oldRegion
+         and region ~= oldRegion
+         and dist <= 20
++        and tostring(region.Name)
++            == "Round"
++                .. tostring(gameRound())
+     then
+         return region
+     end
+ end
+@@ -3423,6 +3433,27 @@
+     while os.clock()
+         - started
+         < timeout
+     do
++        -- V61.14.5 authoritative cross-section recovery:
++        -- D3 proof showed the generic reused Portal can physically send the
++        -- character to Round7 while server GameRound is still 5. If the exact
++        -- server-current wake is already live/cached far ahead, float directly
++        -- to that current round instead of touching the ambiguous section portal.
++        if getgenv().IronSoulWorld1RoundRecovery
++            and getgenv().IronSoulWorld1RoundRecovery:
++                RecoverIfNeeded(
++                    oldRegion,
++                    "SECTION_PORTAL"
++                )
++        then
++            portalLog(
++                "CURRENT_ROUND_ROUTE success GameRound="
++                    .. tostring(gameRound())
++            )
++
++            return true,
++                "CURRENT_ROUND_TWEEN"
++        end
++
+         local evidence =
+             portalTeleportEvidence(
+                 beforePos,
+                 oldRegion
+             )
+@@ -3538,6 +3569,21 @@
                          .. string.format(
                              "%.2f",
                              dist
@@ -48,7 +112,7 @@
                  -- Enter the exact small RoundDoor.Portal volume.
                  -- Unlike old versions, this is NOT a generic Workspace.Portal.
                  for _, offset in ipairs({
-@@ -4089,15 +4119,90 @@
+@@ -4089,15 +4135,90 @@
      local y =
          doorPos.Y
  
@@ -145,7 +209,7 @@
  
      local promptDist =
          (
-@@ -4221,42 +4326,99 @@
+@@ -4221,42 +4342,99 @@
      UsedDoorRoots[
          frozenRoot
      ] = true
