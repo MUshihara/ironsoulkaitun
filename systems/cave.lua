@@ -1,12 +1,14 @@
 --========================================================--
--- IRON SOUL - CAVE MODE V61.16 R1
+-- IRON SOUL - CAVE MODE V61.17 R1
 --
 -- First production Cave milestone:
 --   * recognize Cave1 / Cave2 / Cave3 by live PlaceId + GameRoundCfg
 --   * reuse the proven headless combat engine for the one-room Cave fight
 --   * NEVER auto-spam Cave Tickets yet
---   * after exactly one settlement, record ticket/material deltas and return
---     to Lobby before the normal dungeon replay path can consume another ticket
+--   * after exactly one settlement, return to Lobby before replay can consume
+--     another Ticket1
+--   * persist a pre-reward baseline; Lobby resolves the authoritative material
+--     delta after PlayerData has fully replicated there
 --========================================================--
 
 local Players = game:GetService("Players")
@@ -15,6 +17,7 @@ local TeleportService = game:GetService("TeleportService")
 
 local LocalPlayer = Players.LocalPlayer
 local LOBBY_PLACE_ID = 117533937949084
+local PENDING_FILE = "IronSoul_CavePending_V61_17.txt"
 
 local CAVES = {
     [91584731222940] = {WorldId="Cave1", Name="Cave of Crystal", RewardKind="CrystalShards"},
@@ -24,17 +27,45 @@ local CAVES = {
 
 local Cave = CAVES[game.PlaceId]
 if not Cave then
-    error("Cave V61.16 unsupported PlaceId=" .. tostring(game.PlaceId))
+    error("Cave V61.17 unsupported PlaceId=" .. tostring(game.PlaceId))
 end
 
 local loadRaw = getgenv().IronSoulLoadRaw
-assert(type(loadRaw) == "function", "Cave V61.16 loader unavailable")
+assert(type(loadRaw) == "function", "Cave V61.17 loader unavailable")
 
 local function status(text)
     text = tostring(text or "")
     local fn = getgenv().IronSoulStatus
     if type(fn) == "function" then pcall(fn, "Cave | " .. text) end
-    print("[IronSoul Cave V61.16]", text)
+    print("[IronSoul Cave V61.17]", text)
+end
+
+local function parse(text)
+    local out = {}
+    for line in string.gmatch(tostring(text or ""), "[^\r\n]+") do
+        local k, v = string.match(line, "^([^=]+)=(.*)$")
+        if k then out[k] = v end
+    end
+    return out
+end
+
+local function serialize(t)
+    local keys = {}
+    for k in pairs(t) do table.insert(keys, k) end
+    table.sort(keys)
+    local rows = {}
+    for _, k in ipairs(keys) do
+        table.insert(rows, tostring(k) .. "=" .. tostring(t[k]))
+    end
+    return table.concat(rows, "\n")
+end
+
+local function readPending()
+    if type(readfile) ~= "function" then return nil end
+    if type(isfile) == "function" and not isfile(PENDING_FILE) then return nil end
+    local ok, text = pcall(readfile, PENDING_FILE)
+    if not ok or type(text) ~= "string" or text == "" then return nil end
+    return parse(text)
 end
 
 local function findModule(name)
@@ -105,6 +136,34 @@ local cfg = ReplicatedStorage:FindFirstChild("GameRoundCfg")
 local liveWorldId = cfg and cfg:GetAttribute("WorldId")
 local liveDiff = cfg and cfg:GetAttribute("DiffLevel")
 
+local function writePending(result)
+    if type(writefile) ~= "function" then return end
+
+    -- If a future SMART Lobby planner created this baseline BEFORE CreatRoom,
+    -- preserve its authoritative TicketBeforeEntry/RewardBefore values.
+    local row = readPending() or {}
+    local samePending = row.Resolved ~= "true"
+        and tostring(row.WorldId or "") == tostring(Cave.WorldId)
+        and tonumber(row.StartedUnix or 0) > 0
+        and os.time() - tonumber(row.StartedUnix or 0) < 600
+
+    if not samePending then row = {} end
+
+    row.Version = "V61.17"
+    row.Resolved = "false"
+    row.PlaceId = tostring(game.PlaceId)
+    row.WorldId = tostring(Cave.WorldId)
+    row.Name = tostring(Cave.Name)
+    row.Diff = tostring(liveDiff)
+    row.StartedUnix = row.StartedUnix or tostring(os.time())
+    row.RewardKind = tostring(Cave.RewardKind)
+    row.RewardBefore = row.RewardBefore or tostring(StartReward)
+    row.TicketAtCaveStart = row.TicketAtCaveStart or tostring(StartTicket)
+    row.Result = tostring(result or "RUNNING")
+
+    pcall(writefile, PENDING_FILE, serialize(row))
+end
+
 status("START | " .. tostring(Cave.Name)
     .. " | WorldId=" .. tostring(liveWorldId)
     .. " | Diff=" .. tostring(liveDiff)
@@ -115,30 +174,33 @@ if liveWorldId ~= nil and tostring(liveWorldId) ~= Cave.WorldId then
         .. " but GameRoundCfg says " .. tostring(liveWorldId))
 end
 
+writePending("RUNNING")
+
 local function writeRun(result)
     if type(writefile) ~= "function" then return end
     local now = pdata()
     local nowTicket = ticket1(now)
     local nowReward = rewardValue(now)
 
-    pcall(writefile, "IronSoul_CaveRun_V61_16.txt", table.concat({
-        "Version=V61.16",
+    pcall(writefile, "IronSoul_CaveRun_V61_17.txt", table.concat({
+        "Version=V61.17",
+        "AuditScope=CAVE_LOCAL_PRE_RETURN",
+        "FinalAuditFile=IronSoul_CaveAudit_V61_17.txt",
         "Result=" .. tostring(result),
         "PlaceId=" .. tostring(game.PlaceId),
         "WorldId=" .. tostring(Cave.WorldId),
         "Name=" .. tostring(Cave.Name),
         "Diff=" .. tostring(liveDiff),
         "Elapsed=" .. string.format("%.2f", os.clock() - StartAt),
-        "Ticket1Before=" .. tostring(StartTicket),
-        "Ticket1After=" .. tostring(nowTicket),
-        "TicketDelta=" .. tostring(StartTicket and nowTicket and (nowTicket - StartTicket) or nil),
+        "TicketAtCaveStart=" .. tostring(StartTicket),
+        "TicketLocalBeforeReturn=" .. tostring(nowTicket),
         "RewardKind=" .. tostring(Cave.RewardKind),
         "RewardBefore=" .. tostring(StartReward),
-        "RewardAfter=" .. tostring(nowReward),
-        "RewardDelta=" .. tostring(nowReward - StartReward),
+        "RewardLocalBeforeReturn=" .. tostring(nowReward),
         "GameRoundComplete=" .. tostring(cfg and cfg:GetAttribute("GameRoundComplete")),
         "GameOver=" .. tostring(cfg and cfg:GetAttribute("GameOver")),
         "Settlement=" .. tostring(LocalPlayer:GetAttribute("Settlement")),
+        "Note=Authoritative reward delta is reconciled after Lobby PlayerData readiness.",
     }, "\n"))
 end
 
@@ -147,6 +209,7 @@ local function returnLobby(reason)
     Finished = true
 
     task.wait(0.22)
+    writePending(reason)
     writeRun(reason)
     status("CLEAR | one-run policy -> Lobby | " .. tostring(reason))
 
@@ -197,6 +260,7 @@ local ok, result = loadRaw("systems/combat.lua")
 getgenv().IronSoulInsideCaveCombat = nil
 
 if not ok then
+    writePending("COMBAT_LOAD_FAILED")
     writeRun("COMBAT_LOAD_FAILED")
     error("Cave combat load failed: " .. tostring(result))
 end
