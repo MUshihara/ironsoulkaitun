@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - SELF-HEALING TRANSITION COMBAT V61.5
+-- IRON SOUL - 24x7 GATE-WATCHDOG COMBAT V61.6
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -206,6 +206,12 @@ local CFG = {
     TRANSITION_WATCHDOG = true,
     TRANSITION_WATCHDOG_IDLE = 4.0,
     TRANSITION_WATCHDOG_COOLDOWN = 3.5,
+
+    -- GATE can also become an empty transition state. V61.5 only ran the
+    -- watchdog from COMBAT, which let D5 sit forever at GameRound=5.
+    GATE_WATCHDOG_IDLE = 3.5,
+    GATE_WATCHDOG_EXPECTED_CLOSED_MAX = 170,
+    GATE_WATCHDOG_EXPECTED_OPEN_MAX = 45,
 
     -- Adaptive combat position.
     ADAPTIVE_COMBAT_POSITION = true,
@@ -7017,6 +7023,163 @@ while not stopReason do
                         task.wait(0.08)
 
                         continue
+                    end
+                end
+            end
+
+            --==================================================--
+            -- V61.6 GATE WATCHDOG
+            --
+            -- Latest D5 evidence:
+            --   State=GATE
+            --   GameRound=5
+            --   CompletedRound=4
+            --   enemies=0
+            --   egg=none
+            --   no usable nearby Round4 gate
+            --
+            -- V61.5's self-healing watchdog existed, but only empty COMBAT
+            -- called it. This branch lets the same recovery system own a
+            -- genuinely empty GATE state too.
+            --==================================================--
+
+            if not gateEnemy
+                and getgenv().IronSoulAdaptiveGateState.EnteredAt
+                and os.clock()
+                    - getgenv().IronSoulAdaptiveGateState.EnteredAt
+                    >= CFG.GATE_WATCHDOG_IDLE
+            then
+                local watchdogOpen,
+                    watchdogClosed =
+                        getgenv().IronSoulExpectedGateStatus(
+                            completedRound
+                        )
+
+                local nearbyExpectedOpen =
+                    watchdogOpen
+                    and watchdogOpen.PlayerDistance
+                        <= CFG.GATE_WATCHDOG_EXPECTED_OPEN_MAX
+
+                local nearbyExpectedClosed =
+                    watchdogClosed
+                    and watchdogClosed.PlayerDistance
+                        <= CFG.GATE_WATCHDOG_EXPECTED_CLOSED_MAX
+
+                -- If there is a legitimate expected gate near us, the
+                -- existing gate logic remains authoritative.
+                --
+                -- If neither exists, this is not a normal gate-opening
+                -- problem anymore; let the self-healing transition system
+                -- inspect ALL current-1 portals / learned routes / bounded
+                -- probes.
+                if not nearbyExpectedOpen
+                    and not nearbyExpectedClosed
+                    and os.clock()
+                        - getgenv().IronSoulAdaptiveGateState.LastAttemptAt
+                        >= CFG.TRANSITION_WATCHDOG_COOLDOWN
+                then
+                    getgenv().IronSoulAdaptiveGateState.LastAttemptAt =
+                        os.clock()
+
+                    local watchdog =
+                        getgenv().IronSoulTransitionWatchdog
+
+                    if watchdog then
+                        if getgenv().IronSoulTelemetry then
+                            getgenv().IronSoulTelemetry:
+                                Event(
+                                    "GATE_WATCHDOG_START",
+                                    "completed="
+                                        .. tostring(
+                                            completedRound
+                                        )
+                                        .. " GameRound="
+                                        .. tostring(
+                                            gameRound()
+                                        )
+                                        .. " openDist="
+                                        .. tostring(
+                                            watchdogOpen
+                                            and watchdogOpen.PlayerDistance
+                                        )
+                                        .. " closedDist="
+                                        .. tostring(
+                                            watchdogClosed
+                                            and watchdogClosed.PlayerDistance
+                                        )
+                                )
+                        end
+
+                        local recovered,
+                            recoveryResult =
+                                watchdog:
+                                    Recover(
+                                        CurrentCombatRegion,
+                                        "EMPTY_GATE"
+                                    )
+
+                        if recovered then
+                            portalsInvoked += 1
+
+                            writePhaseAudit(
+                                "GATE_TRANSITION_WATCHDOG",
+                                completedRound,
+                                recoveryResult
+                            )
+
+                            if getgenv().IronSoulTelemetry then
+                                getgenv().IronSoulTelemetry:
+                                    Event(
+                                        "GATE_WATCHDOG_SUCCESS",
+                                        tostring(
+                                            recoveryResult
+                                        )
+                                    )
+                            end
+
+                            state =
+                                "COMBAT"
+
+                            CurrentState =
+                                state
+
+                            completedRound =
+                                nil
+
+                            pendingGateRound =
+                                nil
+
+                            noLocalEnemySince =
+                                nil
+
+                            getgenv().IronSoulAdaptiveGateState.EnteredAt =
+                                nil
+
+                            lockRegion(
+                                "AFTER_GATE_WATCHDOG"
+                            )
+
+                            CurrentCombatRound =
+                                gameRound()
+
+                            lastRound =
+                                gameRound()
+                                or lastRound
+
+                            task.wait(0.22)
+
+                            continue
+                        else
+                            if getgenv().IronSoulTelemetry then
+                                getgenv().IronSoulTelemetry:
+                                    Event(
+                                        "GATE_WATCHDOG_NO_ROUTE",
+                                        tostring(
+                                            recoveryResult
+                                        )
+                                    )
+                            end
+                        end
                     end
                 end
             end
