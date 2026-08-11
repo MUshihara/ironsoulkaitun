@@ -13,6 +13,7 @@ This file is the continuity source for future ChatGPT conversations. Read this b
 - Mobile/Delta support should be capability-based, not executor-name-based.
 - Production fixes belong in GitHub. Temporary diagnostics/recon scripts should be given raw in chat and run by the user, not committed.
 - Every change should be evidence-driven from telemetry/recon where possible.
+- User prefers temporary diagnostic scripts delivered as downloadable `.txt` files rather than pasted as huge chat blocks.
 
 ## Stable place IDs
 - Tutorial/starter: 76701861705540
@@ -63,6 +64,9 @@ This file is the continuity source for future ChatGPT conversations. Read this b
 - Preferred transition pattern: identify exact valid portal/gate, approach quickly, use real/native final movement/touch, verify actual transition evidence.
 - Transition watchdog persists successful learned routes and bounded recovery attempts.
 - Learned-route fast path should only be used when a route was previously proven; unseen transitions fall back to conservative logic.
+- Recovery watchdog behavior must remain LOCAL. A replicated current-1 portal hundreds/thousands of studs away is not a valid recovery candidate.
+- Raw displacement is not progression proof. `PORTAL_MOVED` must not be accepted or learned as success.
+- Old persisted learned routes with `PORTAL_MOVED`/`CHARACTER_CHANGED` results are unsafe and must be rejected.
 - World2 introduces transition/objective classes not covered by old RoundDoor logic.
 
 ## Forge/inventory knowledge
@@ -83,68 +87,82 @@ This file is the continuity source for future ChatGPT conversations. Read this b
 - Repeated unified-diff line-number drift caused runtime failures such as line 9244 and lobby line 342.
 - patch_loader V2 re-anchors by exact old hunk text when recorded line numbers drift, and rejects ambiguous/nonexistent anchors.
 - Do not add fragile late patches when compatibility can be normalized before the module loads.
+- New patches must be checked against the already-patched source context, not only the immutable base. V61.6 had already inserted AttemptCount near LastAttempt, so later watchdog patches must target the post-V61.6 layout.
 
-## Recent World2 evidence (2026-08-11)
-PlaceId 136216144170036, World2 Diff1.
+## World2 D1 knowledge (PlaceId 136216144170036)
+### Proven map-level facts
+- Teleport data identifies `LastPlace=World2`, `DiffLevel=1`.
+- `GameRoundCfg` exposes WorldId=World2, DiffLevel=1, GameRound, GameRoundComplete, MaxRound=6.
+- At least one earlier World2 D1 run reached settlement with 68 targets / 0 deaths, so the map is fundamentally clearable by the project.
 
-A prior World2 run reached settlement with 68 targets and 0 deaths, proving the whole map is not fundamentally unsupported.
+### Proven destructible progression mechanic
+Standalone RAW_RECON_R3 plus kaitun nav history proved that World2 uses destructible crystal progression objects:
+- object example: `Workspace.World.Room1...crystal6`
+- CollectionService tag: `DestructibleObject`
+- replicated attributes include `HitCount` and `PowerRate`
+- V61.11 objective resolver attacked the crystal and the authoritative server round advanced from 1 to 2.
 
-Latest supplied run (MatchId 20260811_203347_136216144170036_11bfe0a9_D1):
-- World=World2, Diff=1
-- Reached GameRound 4 / CompletedRound 3
-- TargetsCompleted=46
-- PlayerHits=1, PlayerDamage=96
-- 0 deaths
-- Round2 gate succeeded normally with NEW_REGION_FAST
-- After Round3 clear, controller entered GATE at Round4 and stalled
-- During stall:
-  - LocalEnemies=0
-  - GlobalEnemies=0
-  - Egg=none according to region-aware combat state
-  - Nearest doors=none
-  - player full HP 2973/2973
-  - current region Round3
-  - exact replicated portal was thousands of studs away and not a valid local transition
-- No OBJECTIVE_PROBE events occurred during this Round4 stall.
+Therefore the generic evidence-backed objective resolver is useful and should be preserved. Do not classify all crystals as decoration.
 
-### Root cause hypothesis/fix for missing Round4 probe
-V61.10 fixed an earlier nil by making the early objective resolver check any workspace.DragonEgg directly. That was too broad: a stale/future DragonEgg replicated in another streamed branch can block the resolver even when region-aware currentDragonEgg() correctly returns nil.
+### Proven boss-skip regression
+RAW_RECON_R3 was run after only stage 1 was complete. Authoritative state was still:
+- GameRound=2
+- GameRoundComplete=1
 
-V61.11.1 combat adds a runtime bridge to the actual region-aware currentDragonEgg() function. The objective resolver now uses the same egg ownership logic as normal combat instead of a global workspace egg check.
+But the player was physically inside `Workspace.World.Room5` near the boss-side area.
+
+Kaitun nav history proved the cause:
+- after the Round1 destructible gate advanced the round, empty traversal invoked the transition watchdog;
+- watchdog saw a replicated Round1 `RoundDoor.Portal` more than ~1,000 studs away;
+- tryPortal CFramed near that distant portal;
+- transitionEvidence treated >100 studs of displacement as `PORTAL_MOVED` success;
+- the route was persisted as a successful D1/R2 learned route;
+- repeated recovery bounced the character between the old Round1 portal area and Room5 while GameRound stayed 2.
+
+### Production correction: V61.11.2 watchdog progression guard
+- recovery portal candidates limited to <=220 studs;
+- `PORTAL_MOVED` removed as transition evidence;
+- learned routes with result `PORTAL_MOVED` or `CHARACTER_CHANGED` are rejected;
+- HasLearnedRoute also rejects unsafe historical routes;
+- unsafe results are not saved by learnSuccess;
+- bounded local probe remains available when no safe local portal exists.
+
+Expected behavior: after the Round1 crystal is destroyed and GameRound becomes 2, the character must stay on the local route and find/cross the newly opened path. It must not jump to Room5 before authoritative progression reaches the boss section.
 
 ## Recent failures that must not be repeated
-1. V61.9 combat runtime `:4034 attempt to call a nil value`
+1. World2 boss skip after stage 1
+   - Cause: far replicated current-1 portal + displacement-only `PORTAL_MOVED` success/learning.
+   - Fix: V61.11.2 local watchdog/progression evidence guard.
+
+2. V61.9 combat runtime `:4034 attempt to call a nil value`
    - Cause: objective resolver was constructed before local currentDragonEgg declaration and closed over a nil/out-of-scope name.
    - Fix: first scope hotfix; later improved by region-aware runtime bridge.
 
-2. V61.10 lobby patch failure `patch hunk source not found near source line 342`
+3. V61.10 lobby patch failure `patch hunk source not found near source line 342`
    - Cause: mobile compatibility was implemented as another late lobby diff on top of older lobby patches.
    - Fix: remove that mobile lobby patch entirely. Normalize queue APIs in bootstrap before proven lobby code loads.
 
-3. Earlier combat patch failure around source line 9244
+4. Earlier combat patch failure around source line 9244
    - Cause: prior patch shifted later hunk by one line.
    - Fix: patch_loader V2 exact-context re-anchoring.
 
 ## Diagnostic policy
-- Diagnostics are temporary, standalone raw scripts supplied in chat.
+- Diagnostics are temporary, standalone raw scripts supplied in chat/downloadable text files.
 - Do not commit recon/diagnostic scripts to GitHub unless user explicitly changes this preference.
 - Production code should collect bounded useful telemetry automatically, but deep recon should be run only when needed.
 - Preferred recon output for unknown world mechanics: game/round state, nearby objects, full paths, attributes, NumberValue/IntValue state, prompts/touches/clicks, remotes/modules names, CollectionService tags, candidate objective ranking, and a short change timeline.
 
 ## Current active architecture
 - Stable loader URL -> bootstrap.lua
-- bootstrap.lua currently routes into bootstrap_v61_11.lua (overall runtime family V61.11)
+- bootstrap.lua routes into bootstrap_v61_11.lua (overall runtime family V61.11)
 - Lobby entry is V61.11 stable chain with only proven V61.6/V61.7/V61.8 forge patches.
-- Combat entry is V61.11.1 and adds the region-aware egg bridge after V61.10 scope hardening.
+- Combat entry includes V61.11.1 region-aware egg bridge after V61.10 scope hardening.
+- Transition watchdog entry is V61.11.2 and includes the local progression guard after V61.8 learned-route support.
 - Tutorial entry is mobile-safe V61.11 path.
 
 ## Next investigation
-1. Re-run World2 D1 with V61.11.1 combat and verify Round4 produces OBJECTIVE_PROBE instead of silently stalling.
-2. Run standalone raw recon at the exact World2 Round4 stuck/gate area.
-3. Use recon to identify whether the new mechanic is:
-   - damageable gate/barrier,
-   - interaction/touch gate,
-   - hidden checkpoint/portal,
-   - streamed objective with HP/progress state,
-   - or another mechanic entirely.
-4. Only then encode a permanent generic resolver.
+1. Re-run World2 D1 with the V61.11.2 watchdog guard.
+2. Verify Round1 crystal destruction advances GameRound 1->2 without moving the player to Room5.
+3. Observe whether bounded local probes/normal traversal move through the opened crystal gate into the legitimate next area.
+4. If it stalls locally, run a focused standalone transition diagnostic at that exact post-crystal position to identify the real next-room path/touch/checkpoint.
+5. Only after correct local traversal is proven should any World2 route be eligible for persistent learning.
