@@ -1,5 +1,6 @@
--- IRON SOUL - V61.6 LOBBY ENTRY
--- Applies the verified V61.6 balanced-forge patch to the immutable V60.1 source.
+-- IRON SOUL - V61.7 LOBBY ENTRY
+-- Applies V61.6 balanced forge plus V61.7 best-ore reserve policy
+-- to the immutable V60.1 lobby source.
 
 local function getPatcher()
     local loadRaw =
@@ -32,7 +33,7 @@ local function getPatcher()
     local patcher = fn()
     assert(
         type(patcher) == "function",
-        "V61.6 patch loader unavailable"
+        "V61.7 lobby patch loader unavailable"
     )
 
     return patcher
@@ -44,5 +45,6 @@ return getPatcher()({
     path = "systems/lobby.lua",
     patch_paths = {
         "systems/patches/lobby_v61_6.patch",
+        "systems/patches/lobby_v61_7_reserve_best_ore.patch",
     },
 })
