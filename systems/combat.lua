@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - OPEN-GATE CROSSING COMBAT V61.3
+-- IRON SOUL - FAST PORTAL + SURVIVAL COMBAT V61.4
 --
 -- MAJOR CHANGE:
 -- Portal/gate progression now uses the GAME'S EXACT route recovered
@@ -191,10 +191,21 @@ local CFG = {
     GUIDED_WALK_TARGET_RADIUS = 7.0,
     GUIDED_WALK_ONLY_OUTSIDE_REGION = 38,
 
+    -- Once the exact current-1 portal is confidently identified, there is
+    -- no reason to walk hundreds of studs. Snap near it, then use REAL
+    -- Humanoid movement for the final touch/trigger distance.
+    FAST_PORTAL_APPROACH = true,
+    FAST_PORTAL_MIN_DISTANCE = 28,
+    FAST_PORTAL_MAX_DISTANCE = 900,
+    FAST_PORTAL_PRE_DISTANCE = 10,
+    FAST_PORTAL_CROSS_DISTANCE = 12,
+    FAST_PORTAL_SETTLE = 0.12,
+    FAST_PORTAL_VERIFY = 1.55,
+
     -- Adaptive combat position.
     ADAPTIVE_COMBAT_POSITION = true,
     ADAPTIVE_PLAYER_HIT_EPSILON = 0.25,
-    ADAPTIVE_EVADE_HOLD = 1.35,
+    ADAPTIVE_EVADE_HOLD = 2.25,
     ADAPTIVE_REPEAT_HIT_WINDOW = 3.0,
     ADAPTIVE_NO_TARGET_DAMAGE = 1.65,
     ADAPTIVE_RETURN_STABLE = 0.65,
@@ -213,6 +224,25 @@ local CFG = {
     -- Verified close-recovery position when our hits are not registering.
     ADAPTIVE_RECOVERY_HEIGHT = 5.5,
     ADAPTIVE_RECOVERY_OFFSET = 1.0,
+
+    -- Boss / survival movement. Attacks continue during every profile.
+    ADAPTIVE_BOSS_HP = 1500,
+    ADAPTIVE_BOSS_HEIGHT = 9.0,
+    ADAPTIVE_BOSS_OFFSET = 3.0,
+    ADAPTIVE_BOSS_ORBIT_SPEED = 62,
+
+    ADAPTIVE_EVADE_ORBIT_SPEED = 105,
+    ADAPTIVE_WIDE_ORBIT_SPEED = 135,
+
+    ADAPTIVE_LOW_HP_RATIO = 0.40,
+    ADAPTIVE_LOW_HP_HEIGHT = 8.0,
+    ADAPTIVE_LOW_HP_OFFSET = 5.0,
+    ADAPTIVE_LOW_HP_ORBIT_SPEED = 145,
+
+    ADAPTIVE_KNOCK_EVADE_HOLD = 1.50,
+    ADAPTIVE_KNOCK_HEIGHT = 8.0,
+    ADAPTIVE_KNOCK_OFFSET = 5.5,
+    ADAPTIVE_KNOCK_ORBIT_SPEED = 150,
 
     -- Only the exact RoundDoor.Portal can be used, never Workspace.Portal.
     SECTION_PORTAL_NEAR_DISTANCE = 85,
@@ -5203,7 +5233,11 @@ local function fightEnemy(enemy)
                 enemy,
                 enemyHealth(enemy),
                 Humanoid
-                and Humanoid.Health
+                and Humanoid.Health,
+                Humanoid
+                and Humanoid.MaxHealth,
+                Humanoid
+                and Humanoid:GetState()
             )
     end
 
@@ -5254,7 +5288,11 @@ local function fightEnemy(enemy)
                     enemy,
                     enemyHealth(enemy),
                     Humanoid
-                    and Humanoid.Health
+                    and Humanoid.Health,
+                    Humanoid
+                    and Humanoid.MaxHealth,
+                    Humanoid
+                    and Humanoid:GetState()
                 )
         end
 
