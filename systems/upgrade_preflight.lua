@@ -1,8 +1,9 @@
 --========================================================--
--- IRON SOUL - POST-FORGE UPGRADE PREFLIGHT V61.24
+-- IRON SOUL - POST-FORGE UPGRADE PREFLIGHT V61.25
 --
 -- Exact order:
 --   historical Forge/EquipBest
+--     -> pet acquisition bridge (claim/start hatch/EquipBest)
 --     -> Blessing/Fortify manager
 --     -> Smart Enchant manager
 --     -> exact upgrade-demand file
@@ -11,8 +12,8 @@
 --========================================================--
 
 local Preflight = {}
-Preflight.VERSION = "V61.24"
-Preflight.LOG_FILE = "IronSoul_UpgradePreflight_V61_24.txt"
+Preflight.VERSION = "V61.25"
+Preflight.LOG_FILE = "IronSoul_UpgradePreflight_V61_25.txt"
 
 local function write(lines)
     if type(writefile) == "function" then
@@ -25,7 +26,7 @@ local function status(text)
     if type(fn) == "function" then
         pcall(fn, "Upgrade | " .. tostring(text))
     end
-    print("[IronSoul Upgrade V61.24]", tostring(text))
+    print("[IronSoul Upgrade V61.25]", tostring(text))
 end
 
 function Preflight.Run()
@@ -40,6 +41,24 @@ function Preflight.Run()
         table.insert(lines, "Result=LOADER_UNAVAILABLE")
         write(lines)
         return false, "LOADER_UNAVAILABLE"
+    end
+
+    -- Pet acquisition is intentionally non-blocking for Story progression.
+    -- It restores the V20-validated hatch bridge that later lightweight Lobby
+    -- code accidentally reduced to claim-only behavior.
+    local okPetLoad, petManager = loadRaw("systems/pet_manager.lua")
+    if okPetLoad and type(petManager) == "table" and type(petManager.Run) == "function" then
+        local okPetRun, petOk, petDetail = pcall(petManager.Run)
+        table.insert(lines, "PetManagerPcall=" .. tostring(okPetRun))
+        table.insert(lines, "PetManagerOk=" .. tostring(petOk))
+        table.insert(lines, "PetManagerDetail=" .. tostring(petDetail))
+
+        if not okPetRun or petOk ~= true then
+            status("Pet bridge unavailable; continuing core progression")
+        end
+    else
+        table.insert(lines, "PetManager=LOAD_FAILED " .. tostring(petManager))
+        status("Pet bridge load failed; continuing core progression")
     end
 
     local okFortify, fortify = loadRaw("systems/fortify_manager.lua")
