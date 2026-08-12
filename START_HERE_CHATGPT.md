@@ -15,114 +15,104 @@ Read this, then `IRONSOUL_PROJECT_MEMORY.md`, then inspect current repo. Long ch
 ## Fresh Lobby truth
 - Lobby `117533937949084` is the progression brain.
 - Fresh PlayerData may be ready while `LG_Level=nil`; real level is `PlayerData.LevelData.Level`.
-- Handle this in preflight, not another lobby patch.
 
 ## World1 — STABLE
-Fresh accounts have progressed repeatedly through World1 D1/D2/D3/D4/D5. V61.15 routing remains baseline; do not casually retune World1 combat/traversal.
+Fresh accounts progressed repeatedly through World1 Normal D1-D5. V61.15 routing remains baseline; do not casually retune World1 traversal/combat.
 
 ## World2 — D1 VALIDATED
 - PlaceId `136216144170036`.
-- **World2 was not disabled.** Previous “frozen” wording meant new World2-specific route-mapper intervention was frozen; Story progression and existing combat/transition/watchdog remained active.
-- `dungeon_route_mapper.lua` stays discovery/logging-only for World2. Do NOT enable active recovery merely because D1 works.
-- Latest unattended W2 D1 full clear: settlement166.89s, GameRound6, 66 targets, 0 deaths, GateSuccess1, GateFail0, no watchdog failure, PortalsInvoked4.
-- Successful sequence: R1 PortalD -> R2; R2 gate -> R3; R3 PortalD -> R4; R4 Portal -> R5; R5 -> R6 settlement.
-- BasicAttack verified and SkillU fired normally.
-- A second W2 D1 run in the same ZIP had already reached Round3 cleanly at capture.
-- **Current proof is D1 only.** Let D2+ happen naturally; only add W2-specific recovery after actual failure evidence.
+- World2 was never disabled; only new World2-specific route-mapper intervention was frozen.
+- Unattended D1 clear: settlement166.89s, GameRound6, 66 targets, 0 deaths, GateSuccess1/GateFail0, no watchdog failure, PortalsInvoked4.
+- Existing combat/transition stack handled PortalD/gate/Portal sequence and SkillU/BaseAttack correctly.
+- Keep route mapper discovery-only in W2 until D2+ gives actual failure evidence.
+- Current Normal recommendations: W2 D2 Lv20/P5600, D3 Lv22/P8000, D4 Lv25/P14000, D5 Lv30/P22000.
 
 ## Cave baseline
-- Cave1 Crystal `91584731222940`: Crystal Shards; Trial Lv10/P480.
-- Cave2 Runes `119524374829397`: EnchantedStone/runes; Trial Lv13/P780.
-- Cave3 Courtyard `132445869992129`: pet materials; Trial Lv13/P940.
-- All are one-room Round1 activities; no Story door/portal traversal.
-- `cave_chase.lua` V61.19 waits for combat-controller readiness before moving; this prevents pre-controller deaths.
-- Cave2/Cave3 validated on mobile.
-- Cave startup can look delayed because the chaser intentionally waits for combat readiness; enemy detection itself is fast after activation.
-- One Cave settlement -> Lobby; no paid replay spam.
+- Cave1 `91584731222940`; Cave2 `119524374829397`; Cave3 `132445869992129`.
+- All are one-room Round1 resource activities. No Story doors/portals.
+- `cave_chase.lua` V61.19 waits for combat-controller readiness before moving; preserve this safety.
+- Cave2/Cave3 mobile validated; one Cave clear -> Lobby.
 
-## Demand-driven SMART Cave V61.24
-- Fixed stock buffers are retired.
-- Order: Forge/EquipBest -> pet bridge -> Blessing/Fortify -> Smart Enchant -> exact demand -> SMART Cave -> otherwise Story.
-- **Cave1** only from real `CrystalShardsMissing` for guaranteed Blessing/Fortify.
-- **Cave2** only when a useful +4 keeper has an existing empty enchant slot and zero usable stones. Never use the old unreliable `3/4 runes` count target.
-- Cave1 outranks Cave2 when both blockers exist because guaranteed Fortify is deterministic.
-- **Cave3 is still held.** Do not infer Cave3 demand from owning pet materials alone; require an actual useful owned pet plus an exact next pet-upgrade material shortage.
-- Trial only; reserve5 Ticket1; cooldown360s.
+## SMART Cave V61.26 — HIGHEST READY DIFFICULTY
+`systems/cave_planner.lua` no longer hardcodes D1.
+- For a demanded Cave, inspect live `ResWorldRound` Normal configs and choose the **highest server-unlocked difficulty whose RecPlayerLv/RecBattlePower the account meets** while preserving Ticket1 reserve5.
+- Cooldown360s remains.
+- Cave1 demand = exact Blessing/Fortify CrystalShards blocker.
+- Cave2 demand = useful +4 keeper has empty enchant slot and zero usable Enchanted Stones.
+- Cave3 first-pet demand = account owns **no pet and no egg**, and an egg-capable Cave3 **D2+** is ready.
+- Priority: deterministic Fortify blocker > first-pet egg blocker > Enchant stone blocker.
 
-Latest integrated decision before pet phase at Lv21/P4221:
-- CrystalShards3;
-- FortifyCrystalMissing13;
-- EnchantEligibleEmptySlots0;
-- EnchantStoneMissing0;
-- only valid Cave candidate = Cave1;
-- remaining cooldown correctly sent account to Story instead of spending another ticket.
+Latest FirstEgg recon at Lv22/P4346 with Ticket1=33:
+- Cave1 clear D1-D2 -> highest recommendation-ready Normal tier is **D3** (D4 requires P5200).
+- Cave2 clear D1 -> highest ready **D2** (D3 requires P5400).
+- Cave3 clear D1 -> highest ready **D2** (D3 requires P6480).
+- Cave costs remain Ticket1 x1 across these Normal tiers, so paying for D1 when a stronger ready tier exists is wasteful.
 
-## V61.25 pet acquisition bridge — CURRENT
-Latest standalone pet-growth recon at Lobby Lv22/P4235 proved:
-- `PlayerData.Pets.Owned` = 0;
-- `PlayerData.Pets.Equipped` = 0;
-- `HasFortifiablePet=false`;
-- `HasUpgradablePet=false`;
-- Currency1=73459, Ticket1=26, WholeDragonScale=24.
-Therefore **WholeDragonScale24 is NOT a Cave3 blocker/demand on this account yet**.
+### Cave3 egg truth
+- D1 display rewards: pet-growth materials, **no egg**.
+- D2/D3/D4 display `Random_Egg` plus increasingly advanced pet materials.
+- Config uses egg loot tables (`LootTable24WithEgg/25WithEgg/26WithEgg`) containing concrete pet eggs including DragonIce/Eagle possibilities.
+- Therefore Cave3 D2+ is a legitimate chance-based first-pet source.
+- `ResMainTask.Main_Pet_001` separately defines a guaranteed `Pet_DragonIce_Egg|Egg|1`; automate this task reward when its normal progression condition is active, but do not fake/give it directly.
 
-The recon also proved the live pet growth modules/tables exist:
-- `PetsFortifyUtil`: CanFortify/Fortify/GetFortifyDef/GetNextFortify/GetPetFortifyMax/HasFortifiablePet;
-- `PetsUpgradeUtil`: CanUpgradeStar/UpgradeStar/StrengthenPetAttr/HasUpgradablePet;
-- Star1..9 Fortify caps = 10,20,...,90;
-- pet Fortify costs directly use Cave3 families such as BrokenDragonScale, WholeDragonScale, DragonClaw, then higher materials.
+## Pet acquisition V61.25
+`systems/pet_manager.lua` restores V20 claim/start/equip behavior:
+- claim completed hatch and verify;
+- read `PlayerData.PetHatch.Egg`;
+- start highest-rarity owned egg in free slot via `StartHatch` and verify EggUUID;
+- EquipBest after pet exists;
+- no GUI/clicking/paid pet action; non-blocking.
+Latest production state was correct `WAIT_EGG`: 0 pets, 0 eggs, 3 empty hatch slots.
+Once an egg drops/arrives, V61.25 should start it automatically.
 
-Regression found in later Lobby pet pass:
-- it retained claim-ready-hatch + EquipBest but lost the V20 **StartHatch owned egg** step;
-- it also used the wrong/fragile completion-call shape instead of the V20-validated `PetsHatchUtil:IsCompleted(slotData)`.
-
-Production fix:
-- `systems/pet_manager.lua` V61.25 restores the validated V20 bridge as a small external bounded manager:
-  1. claim completed hatch via `RemoteEvent:FireServer("Claim", slotIndex)` and verify;
-  2. read owned eggs from `PlayerData.PetHatch.Egg`;
-  3. start highest-rarity owned eggs in free slots via `RemoteEvent:FireServer("StartHatch", slotIndex, eggUUID)` and verify `EggUUID`;
-  4. `PetsUtil.RemoteEvent:FireServer("EquipBest")` once a pet exists.
-- no GUI/clicking, no paid pet action, no fast polling.
-- log `IronSoul_PetManager_V61_25.txt`.
-- `upgrade_preflight.lua` V61.25 runs this bridge before Fortify/Enchant and treats it as **non-blocking**, so a pet issue can never break proven Story progression.
-- Possible next state: `PET_READY`, `HATCHING`, or `WAIT_EGG`.
-- If `WAIT_EGG`, next task is exact **first-egg acquisition** research; do not run Cave3 just to obtain materials.
+## Pet growth
+- `PetsFortifyUtil` and `PetsUpgradeUtil` mapped.
+- Pet Fortify costs use BrokenDragonScale -> WholeDragonScale -> DragonClaw -> DragonHorn/etc.
+- Star1..9 Fortify caps 10/20/.../90.
+- Exact live mutation is intentionally not enabled until an actual pet exists.
+- After first pet: validate one growth mutation, then replace egg-only Cave3 demand with exact pet-material demand.
 
 ## Skill/combat baseline
-- Level Skill branches = Level + weapon proficiency; `skill_manager.lua` activates server-granted branches only.
-- Weapon-aware V61.21 loadout passed.
-- V61.22 fixed skills-only BaseAttack regression; W1/W2/Cave now show `BASIC_DRIVER | VERIFIED`.
-- SkillU is charge-based and native server readiness remains authoritative. W1 and W2 both produced real Ultimate casts.
+- Level Skill branches = Level + weapon proficiency; activate only server-granted branches.
+- V61.21 weapon-aware best loadout passed.
+- V61.22 restored continuous headless BaseAttack and native charge-based SkillU; W1/W2/Cave show verified basics and real Ultimates.
 
-## Blessing = internal Fortify system
-- **Blessing is the player-facing game name for the equipment system implemented internally as `Fortify` / `FortifyUtil`.**
-- Do not create a separate Blessing system without new evidence.
+## Blessing / Fortify
+- Blessing is player-facing name; internal system = `Fortify`/`FortifyUtil`.
+- V61.23 production auto-upgrades useful gear only through guaranteed +4, reserves 2 shards + Currency1 10000, verifies every mutation.
+- First proof: Sword +1->+4 and breastplate +1->+4, 6/6 verified.
 
-## V61.23 Blessing/Fortify — PRODUCTION PASS
-- auto only guaranteed +2/+3/+4;
-- primary Weapon -> equipped Armor -> competitive Weapon2 only;
-- reserve CrystalShards2 / Currency1 10000;
-- max6 verified actions/Lobby.
-- First proof: `Single_Gray` +1->+4 and Monarch T3 breastplate +1->+4, 6/6 verified.
-- Latest session proves it recalculates after Forge replacements; exact remaining shard blocker became Missing13 rather than spending below reserve.
+## Smart Enchant V61.24
+- Exact write validated: `EquipmentRE:FireServer("Enchant", equipmentUUID, slotKey, stoneUUID)`.
+- Keeper +4 minimum; existing empty slots only; one verified action/Lobby; no overwrite/UnEnchant.
+- Controlled Burn test spent 2400 Currency1, consumed exact stone, power616->696.
+- Cave2 demand is exact state, never old unreliable `3/4 runes` counting.
 
-## V61.24 Smart Enchant — LIVE / INTEGRATED
-Exact write: `EquipmentRE:FireServer("Enchant", equipmentUUID, enchantSlotKey, enchantedStoneUUID)`.
-- Controlled Burn_1 test on `Single_Gray` +4 passed: Currency1 -2400, power616->696, stone consumed, slot verified.
-- Production manager: keeper Fortify>=4, active weapon first, one action/Lobby, existing empty slots only, Currency reserve10000, no overwrite/UnEnchant/DetachTool, verify installed slot + exact stone consumption.
-- Latest normal-loader state has `Single_Gray` power776, EnchantSlots2, Empty0/Filled2, strongly indicating a later production cycle filled the second slot.
-- Current Enchant demand correctly says zero, so Cave2 is not requested.
+## Hell mode — NEXT, NOT YET PRODUCTION
+Latest PlayerData has `Worlds.OpenHell=true`.
+- Current historical Story planner explicitly filters `cfg.Style == "Normal"`, so Hell is **not currently selected**.
+- FirstEgg recon can display World1 Diff6-D8 rewards with Hellstone1 and World2 higher diff rewards with Hell ores, strongly indicating useful Hell farming exists.
+- Do not blindly hardcode Diff6 as Hell. Next diagnostic `IronSoul_Hell_Grocery_Recon_V61_27.lua` enumerates live non-Normal/Hell configs, recommendations, unlock state and rewards.
+- Intended policy after proof: **advance Normal progression whenever ready; if next Normal stage is power-blocked, farm the highest safe unlocked Hell stage for better ores/power, then re-check Normal progression.**
 
-## Upgrade chain — CURRENT
-`Forge/EquipBest -> Pet acquisition V61.25 -> Blessing/Fortify -> Smart Enchant -> SMART Cave -> Story`.
-The pet bridge is non-blocking and Cave3 remains disabled until `PET_READY` plus exact live pet-growth demand.
+## Grocery / shops — NEXT
+Known API:
+- Grocery = `ConsumableShopUtil` / `ScreenConsumableShop`.
+- Utility exposes `GetShopConfig`, `GetShopData`, `GetShopSnapshot`, `GetAllShopConfigs`, `GetItemStock`, `BuyItem`, refresh helpers and RemoteEvent.
+- Gold/Bond/Honor/Season shops also exist.
+- Production buying is NOT enabled yet because exact current stock IDs, prices, currencies and `BuyItem` tuple have not been live-validated.
+- Target architecture: upgrade manager publishes exact blocker -> shop manager checks stock/price/reserve -> buys and verifies if economical -> only then spend Cave ticket.
+- V61.27 read-only recon maps this next.
+
+## Current upgrade chain
+`Forge/EquipBest -> Pet acquisition -> Blessing/Fortify -> Smart Enchant -> highest-ready SMART Cave -> Story`.
 
 ## Next phase
-1. Run normal loader through one Lobby and inspect `IronSoul_PetManager_V61_25.txt`.
-2. If `HATCHING`, let normal 24/7 loop continue until claim; if `PET_READY`, validate one exact pet Fortify/Star mutation and then publish Cave3 demand; if `WAIT_EGG`, map the first-egg acquisition source first.
-3. Let World2 D2+ be reached naturally and inspect logs before changing routing.
-4. Smart shops/currency spending.
-5. Higher-risk Blessing/Fortify +5+ only with explicit risk/value policy; Endless later.
+1. Run standalone `IronSoul_Hell_Grocery_Recon_V61_27.lua` in Lobby and inspect its txt.
+2. Build smart Hell fallback + exact purpose-driven shop purchasing from that evidence.
+3. Normal loader test V61.26 Cave highest-difficulty selection naturally.
+4. After first pet: controlled pet-growth mutation -> exact Cave3 material demand -> Pet Expedition later.
+5. Higher-risk Blessing +5+ only with explicit risk/value policy; Endless later.
 
 ## Settlement / replay
 - Inventory maintenance threshold85; full/high inventory -> Lobby.
