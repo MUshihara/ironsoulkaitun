@@ -33,10 +33,12 @@
  
      -- Verified close-recovery position when our hits are not registering.
      ADAPTIVE_RECOVERY_HEIGHT = 5.5,
-@@ -239,12 +244,16 @@
+@@ -239,14 +244,18 @@
  
      -- Boss / survival movement. Attacks continue during every profile.
      ADAPTIVE_BOSS_HP = 1500,
++    ADAPTIVE_THREAT_PLAYER_HP_MULTIPLIER = 3.0,
++    ADAPTIVE_THREAT_PRIORITY_RADIUS = 180,
 -    ADAPTIVE_BOSS_HEIGHT = 9.0,
 -    ADAPTIVE_BOSS_OFFSET = 3.75,
 -    ADAPTIVE_BOSS_ORBIT_SPEED = 78,
