@@ -9,7 +9,7 @@ Read this, then `IRONSOUL_PROJECT_MEMORY.md`, then inspect current repo. Long ch
 - Tween toward exact/current progression, dwell about **0.60s before final portal touch/cross**, and require authoritative evidence.
 - Movement/crossed-plane/raw displacement alone is never progression proof.
 - Preserve proven World1 combat/forge unless evidence requires change.
-- Historical `combat.lua` is near Luau's local-register ceiling: substantial new logic belongs in external modules/wrappers.
+- Historical `combat.lua` is near Luau's local-register ceiling: substantial new logic belongs in external modules/wrappers or existing patches updated in place.
 - Diagnostics are downloadable `.lua`; result/log files may be `.txt`.
 
 ## Fresh Lobby truth
@@ -63,18 +63,26 @@ Fresh accounts have progressed repeatedly through World1 D1/D2/D3. V61.15 routin
 - `systems/skill_manager.lua` V61.20.1 only activates branches the server already granted, across all weapon classes, and verifies `PlayerData.SkillTree.Active`.
 - Latest skill-manager test: 9 server-unlocked branches, 5 newly activated, 4 already active, 0 failed.
 
-## V61.21 weapon-aware combat loadout
+## V61.21 weapon-aware combat loadout — EQUIP PATH PASSED
 - **Skill Tree activation and equipped combat loadout are separate systems.** Activating a branch does not guarantee it is the skill sitting in Skill1/Skill2/SkillU.
 - Proven V43.1 protocol: `WeaponUtil.RemoteEvent:FireServer("EquipSkill", weaponId, slot, skillId)`.
 - Verify effective loadout with `WeaponUtil:GetWeaponSkillId(player, weaponId, slot)`; validate eligibility with `WeaponUtil:CanEquipSkill(...)`.
-- `systems/skill_loadout_manager.lua` V61.21 runs from the small combat entry wrapper, after Lobby equipment choice is already final and before the historical combat controller starts.
-- It reads live equipped weapon class/id from `WeaponUtil:GetEquippedWeaponClass/GetEquippedWeaponId`, so Sword/Staff/Heavy/Sickle/Fist/Greatsword each receive their own compatible loadout.
-- Candidate skills come from live `ResSkillTree`: base Skill1/Skill2/SkillU plus only level branches that are both server-unlocked and active.
-- Basic skills compete for Skill1+Skill2; Ultimate skills compete for SkillU.
-- Selection uses live `ResSkill` + `ResSkillStage` combat data: damage events, effective cooldown, action time, range, charge and mitigation. `CanEquipSkill` is still authoritative; invalid candidates are never forced.
-- Every change is verified from the effective WeaponUtil getter. Failure is fail-closed: keep existing loadout and continue dungeon.
-- Log: `IronSoul_SkillLoadout_V61_21.txt`.
-- Cave V61.19 startup safety remains intact: Cave chase stays armed/motionless while loadout maintenance runs and only moves after combat-controller readiness.
+- `systems/skill_loadout_manager.lua` V61.21 runs after Lobby equipment choice and before the historical combat controller.
+- Latest D4 test equipped Sword `Single_Gray`: Skill1 `Single_Skill_1`, Skill2 `Single_Skill_2`, SkillU `Ashwarden_Skill_US`; all three server-verified, Failed=0.
+
+## V61.22 basic attack + Ultimate correction
+- The V61.21 loadout exposed an old combat flaw: combat cast Skill2/Skill1 before the first BaseAttack calibration. A skill action window could make the one-shot 1-second BaseAttack test show no HP change.
+- Old `calibrateHeadless` then permanently set `AttackDriverMode=HEADLESS_FAILED`; `basicAttack()` explicitly did nothing in that mode while skills continued. Latest D4 telemetry showed exactly this skills-only behavior: repeated `TARGET_HIT_STALL`, HP moving mainly when Skill1/Skill2 came off cooldown.
+- V61.22 updates the **existing** `combat_v61_8_skill_telemetry.patch` in place; no new combat patch is added.
+- If AttackDriver is UNTESTED, BaseAttack calibration now has first priority before any skill cast.
+- Calibration waits out `SkillCastingUntil`, sends the proven clean four-stage direct combo, and verifies real target HP.
+- One failed sample no longer permanently disables basics. It keeps `HEADLESS_REMOTE` alive and lets the existing no-damage watchdog/headless recovery retry. **No Mouse1 fallback.**
+- New low-volume telemetry: `BASIC_DRIVER | VERIFIED` or `BASIC_DRIVER | UNVERIFIED_RETRY attempt=N`.
+- SkillU callback discovery is now enabled. Do not treat SkillU as an ordinary third cooldown skill.
+- Live ResSkill data proves Ultimate is **charge-based**. Normal attacks/basic skills have `GenerateCharge`; Ultimates have required `Charge`.
+- Current selected `Ashwarden_Skill_US` has `Charge=80`; older `Single_Skill_U` has `Charge=40`.
+- V61.22 attempts native SkillU only on boss/high-HP targets. The game's native callback/server remains authoritative on whether enough charge exists; no charge bypass/spoof.
+- Base attacks are therefore important both for normal DPS and for filling Ultimate charge.
 
 ## Settlement / replay
 - Inventory maintenance threshold 85; full/high inventory at settlement -> Lobby immediately.
@@ -84,6 +92,6 @@ Fresh accounts have progressed repeatedly through World1 D1/D2/D3. V61.15 routin
 - `FortifyUtil.Fortify` arity3.
 - `EnchantmentUtil.Enchant` arity5; `UnEnchant` arity4.
 - Exact unattended mutation tuple still needs validation before enabling spending.
-- Recommended next progression work: verify V61.21 loadout once -> Fortify/Blessing protocol -> Enchant -> pet growth -> Endless Tower.
+- Recommended next progression work: verify V61.22 normal attack + SkillU behavior once -> Fortify/Blessing protocol -> Enchant -> pet growth -> Endless Tower.
 
 Repo is source of truth when chat memory conflicts.
