@@ -12,10 +12,32 @@
 
 ## World2
 - PlaceId `136216144170036`.
-- W2 D1 validated unattended: settlement166.89s, GameRound6, 66 targets, 0 deaths, GateSuccess1/GateFail0, watchdog0, PortalsInvoked4; BasicAttack verified + real SkillU.
-- Current route mapper remains discovery-only in World2; preserve successful existing transition stack.
-- Normal recs: D1 17/3600; D2 20/5600; D3 22/8000; D4 25/14000; D5 30/22000.
-- Latest account Lv22/P4346 has W2 D1 cleared but is power-blocked from D2.
+- Normal Trial (internal Diff1) unattended clear validated: settlement166.89s, Round6, 66 targets, 0 deaths, gate1/0, watchdog0.
+- **Hell Trial** unattended clear validated: internal Diff6, settlement179.14s, Round6, 51 targets, 0 deaths, gate1/0, watchdog0; BaseAttack and SkillU worked.
+- Route mapper remains discovery-only in World2; preserve successful existing transition stack.
+
+### Hell internal IDs vs UI stage names
+The UI always has five buttons: `Trial / Challenge / Penitent / Torment / Inferno`.
+- Normal internal Diff1..5 = those five stages.
+- Hell internal Diff6..10 = the same five stages.
+- Therefore internal Diff6 = **Hell Trial**, not visible “D6”.
+
+World2 Hell unlocks from corresponding Normal clears:
+- Hell Trial internal6 -> `World2|1` (currently unlocked + cleared live).
+- Hell Challenge internal7 -> `World2|2` (currently locked in screenshot/recon).
+- Hell Penitent internal8 -> `World2|3`.
+- Hell Torment internal9 -> `World2|4`.
+- Hell Inferno internal10 -> `World2|5`.
+
+## Hell-first V61.30
+Production `systems/hell_planner.lua`, commit `a825ea380f61282e67b2195c35cd3b3a0a2f22f5`.
+- Hell is now the **default free farm/repeat mode**.
+- Do not switch back to Normal simply because Normal is ready.
+- Normal is used only as a **one-clear unlock bridge** when it opens the next Hell stage; next Lobby returns to Hell.
+- Hard gates: server unlock + recommended level.
+- Hell configs have blank RecBattlePower, so use matching Normal stage RecBattlePower as proxy.
+- Script-ready power floor = **78%** of matching Normal recommendation.
+- Example current W2 behavior: Hell Trial -> once Normal Challenge is unlocked/level-ready and power >=78% of5600 (=4368), clear Normal Challenge once -> Hell Challenge becomes default.
 
 ## Cave combat baseline
 - Cave1 `91584731222940`; Cave2 `119524374829397`; Cave3 `132445869992129`.
@@ -23,116 +45,68 @@
 - V61.19 chase waits for combat-controller readiness, then handles far enemies; mobile validated.
 - One Cave run -> Lobby; reserve5 Ticket1; cooldown360s.
 
-## SMART Cave V61.26 — HIGHEST READY NORMAL TIER
-Production `systems/cave_planner.lua` commit `25a52ac4dda343bb9461e7f7915696aaa06fe212`.
-- Removed hardcoded D1.
-- For each demanded Cave, inspect live `ResWorldRound` configs with `Style==Normal`; choose highest server-unlocked diff meeting current RecPlayerLv/RecBattlePower and ticket reserve.
-- Cave1 demand = exact Blessing/Fortify `CrystalShardsMissing`.
-- Cave2 demand = exact Enchant empty-keeper-slot + no-stone blocker.
-- Cave3 first-pet demand = zero owned pets AND zero owned eggs AND an egg-capable ready D2+ exists.
-- Priority: deterministic Fortify > first-pet egg > Enchant.
+## SMART Cave V61.30
+Production `systems/cave_planner.lua`, commit `8e8d8faf5a1f7d6f728c89dd51b2deb96be1e572`.
+- Demand-driven; no arbitrary Cave farming.
+- Highest current server-unlocked Normal Cave stage is chosen if:
+  - recommended LEVEL is met exactly/hard gate;
+  - current power >= **78%** of recommended power;
+  - Ticket1 reserve preserved.
+- This intentionally allows roughly22% under recommended power because headless combat is much stronger than ordinary play.
+- Cave1 demand = exact Blessing/Fortify CrystalShards blocker.
+- Cave2 demand = exact Enchant empty-slot/no-stone blocker.
+- Cave3 first-pet demand = no pet + no egg + egg-capable D2+.
+- Priority currently deterministic Fortify > first-pet egg > Enchant.
+- If a Cave says Lv16/P2880, level15 is NOT allowed; level16 with power >=2247 is eligible if server-unlocked.
 
-Normal Cave recommendations:
-- Cave1 D1 10/480; D2 15/1300; D3 20/3400; D4 22/5200; D5 28/12000.
-- Cave2 D1 13/780; D2 16/2400; D3 22/5400; D4 25/8000.
-- Cave3 D1 13/940; D2 16/2880; D3 22/6480; D4 25/9600.
-- Each observed Normal Cave tier costs Ticket1 x1.
-
-Latest account Lv22/P4346/Ticket33:
-- Cave1 highest ready D3.
-- Cave2 highest ready D2.
-- Cave3 highest ready D2.
-
-## First egg truth
-- Cave3 D1 has pet-growth materials but no egg.
-- Cave3 D2/D3/D4 have `Random_Egg` plus increasingly advanced pet materials.
-- `LootTable24WithEgg/25WithEgg/26WithEgg` contain concrete eggs including DragonIce/Eagle possibilities.
-- `ResMainTask.Main_Pet_001` separately rewards guaranteed `Pet_DragonIce_Egg|Egg|1`; claim only when legitimately active.
-- Expedition can later produce Random_Egg but requires a pet first.
-
-## Pet acquisition V61.25
-`systems/pet_manager.lua`:
-- claim completed hatch + verify;
-- read owned eggs from `PlayerData.PetHatch.Egg`;
-- start highest-rarity egg in free slot via `StartHatch` + verify EggUUID;
-- EquipBest after pet exists;
-- no GUI/click/paid pet action; non-blocking.
-Latest state correctly `WAIT_EGG`.
-
-## Pet growth
-- `PetsFortifyUtil` / `PetsUpgradeUtil` mapped.
-- Star1..9 Fortify max 10/20/.../90.
-- Costs use BrokenDragonScale -> WholeDragonScale -> DragonClaw -> DragonHorn/etc.
-- No mutation enabled until actual pet exists. After first pet, validate one mutation then publish exact Cave3 material demand.
+## First egg / pets
+- Cave3 D1 no egg; D2/D3/D4 display Random_Egg.
+- `Main_Pet_001` separately rewards guaranteed DragonIce egg when legitimately active.
+- `systems/pet_manager.lua` V61.25 claim/start/equip bridge is production; current account state correctly WAIT_EGG when 0 pets/0 eggs.
+- Pet Fortify costs use BrokenDragonScale -> WholeDragonScale -> DragonClaw -> DragonHorn/etc.; live mutation waits for first pet.
 
 ## Skills/combat
 - Level Skill activation server-granted only.
-- V61.21 weapon-aware best loadout passed.
-- V61.22 fixed skills-only regression; BaseAttack + native charge-based SkillU verified in Cave/W1/W2.
+- V61.21 weapon-aware loadout passed.
+- V61.22 BaseAttack + native charge-based SkillU verified in Cave/W1/W2/Hell Trial.
 
 ## Blessing/Fortify V61.23
 - Blessing player-facing; internal API Fortify.
-- auto guaranteed +2/+3/+4 only;
-- primary weapon -> armor -> competitive Weapon2;
+- auto guaranteed +2/+3/+4 only; primary weapon -> armor -> competitive Weapon2.
 - reserve2 CrystalShards + Currency1 10000; max6 verified actions/Lobby.
-- First production pass 6/6 verified.
 
 ## Smart Enchant V61.24
-- Exact write: `EquipmentRE:FireServer("Enchant", equipmentUUID, slotKey, stoneUUID)`.
-- +4 keeper minimum, existing empty slot only, one action/Lobby, reserve Currency1 10000, no overwrite/UnEnchant.
-- Burn proof: Currency -2400, power616->696, exact stone consumed.
+- Exact write validated: `EquipmentRE:FireServer("Enchant", equipmentUUID, slotKey, stoneUUID)`.
+- +4 keeper minimum; existing empty slot only; one action/Lobby; no overwrite/UnEnchant.
 
-## Smart Hell V61.28 — ENABLED, FIRST LIVE CLEAR PENDING
-Live V61.27 recon proved:
-- `PlayerData.Worlds.OpenHell=true`.
-- 20 Hell configs across World1-World4.
-- World1 Hell D6-D10 unlocked on latest account.
-- World2 Hell D6 unlocked; D7+ locked until further W2 Normal clears.
-- Hell configs have `RecPlayerLv` but blank `RecBattlePower`.
+## Grocery V61.30
+V61.29 source recon fully proved purchase protocol:
+`ConsumableShopUtil.RemoteEvent:FireServer("BuyShopItem", "Gold", itemConfigId)`.
+Server checks stock/currency/daily limit and grants configured item.
 
-Production:
-- `systems/hell_planner.lua` commit `c0c17769225dc2d356e0de58f5272ae2cbb9c834`.
-- `systems/upgrade_preflight.lua` integration commit `98391fc0e67ba88be73a6aa050bac7f961d2d198`.
-- Policy: ready Normal progression always wins. If next Normal stage is blocked and no Cave action handled the cycle, choose highest safe server-unlocked Hell in supported World1/World2.
-- Power safety: corresponding Normal difficulty `(HellDiff-5)` RecBattlePower ×1.15. This is a conservative proxy because Hell RecPower is absent; do not invent a Hell power requirement.
-- Latest account Lv22/P4346 should choose W2 Hell D6. Proxy W2 Normal D1 P3600 -> safe4140; account passes.
-- W2 Hell D6 rewards: Hellstone3, Hellstone2, Hexbane, Bloodshard, Verdanite.
-- Mark stable only after first clean unattended Hell clear.
+Gold useful configs include:
+- CrystalShards x3/1000.
+- tier3 Burn/Methysis/Frost/Corrode stones /3000.
+- BrokenDragonScale x5/1000, WholeDragonScale x5/2000, DragonClaw x5/3500, DragonHorn x5/5000, DragonTear x5/7500.
+- EXP/Drop/Atk/HP and other potions; Hell ores also rotate.
 
-## Grocery / shops — ROTATIONS + ECONOMY PROVEN; PURCHASE PROTOCOL PENDING
-V61.27 recon:
-- `ConsumableShopUtil` owns `Gold` and `Bond` configs and a RemoteEvent.
-- Gold: Currency1, 10 items/refresh, refresh every5 min, max15 daily purchases.
-- Bond: BondCoin, 10 items/day, max5 daily purchases.
-- PlayerData has `GoldShop.StockLimit`, `BuyCount`, refresh timer, daily purchase count.
+Production `systems/shop_manager.lua`, commit `2650ec92f15a489ca36603e40ee80c19f100b2e3`.
+- buys only exact Fortify/Enchant blockers from current Gold rotation;
+- no paid refresh;
+- Currency1 reserve20000;
+- max3 buys/Lobby, >=0.40 sec interval;
+- verify stock decrease + currency decrease + resource/stone increase.
+- pet mats wait until exact pet-growth demand; potions wait until use-policy/protocol.
 
-Gold config useful items:
-- `GoldShop_17`: CrystalShards x3 for 1000.
-- `GoldShop_18..21`: Burn_3/Methysis_3/Frost_3/Corrode_3 x1 for3000.
-- `GoldShop_29`: BrokenDragonScale x5 for1000.
-- `GoldShop_30`: WholeDragonScale x5 for2000.
-- `GoldShop_31`: DragonClaw x5 for3500.
-- `GoldShop_32`: DragonHorn x5 for5000.
-- `GoldShop_33`: DragonTear x5 for7500.
-- Potions include Gold/EXP/Luck/Drop/Atk/HP/CH.
-- Gold shop also sells useful Hell ores.
+## Current chain V61.30
+`Forge/EquipBest -> Pet acquisition -> Blessing/Fortify -> Smart Enchant -> Grocery exact blocker -> re-run upgrades if Grocery bought -> SMART Cave -> Hell-first -> one-clear Normal bridge only when needed to unlock next Hell stage -> historical Story fallback only if Hell cannot handle`.
 
-Latest Gold rotation at V61.27:
-`GoldShop_05,06,14,15,16,21,22,26,29,33` = Hellstone3, Earthmaw, CrystalGem, CrystalPrism, CrystalFlake, Corrode_3, GoldPotion, AtkPotion, BrokenDragonScale, DragonTear.
+Preflight integration commit `3c361ed55bb809f3038c604c8788c430bcb7f1ab`.
 
-Season shop config can rotate Ticket1, Hellstone8, crystals, DragonTear, scrolls and potions. Latest normal rotation IDs: 08,16,20,07,15,21; special01. Latest SeasonCurrency=500.
-
-Do NOT auto-buy yet:
-- `ConsumableShopUtil.BuyItem` exists (argc4), but exact client argument tuple/call site was not proven by V61.27.
-- Focused read-only diagnostic created: `IronSoul_Shop_Protocol_Recon_V61_29.lua`.
-- Target flow after proof: exact blocker -> current stock -> price/reserve -> buy once -> authoritative inventory/currency verification -> recalc blocker -> only then Cave ticket.
-
-## Current chain
-`Forge/EquipBest -> Pet acquisition -> Blessing/Fortify -> Smart Enchant -> highest-ready SMART Cave -> Smart Hell fallback if Normal blocked -> Normal Story`.
-
-## Next work
-1. Normal loader: validate first W2 Hell D6 unattended clear; if failure, use logs rather than retune blindly.
-2. Run `IronSoul_Shop_Protocol_Recon_V61_29.lua` in Lobby; implement purpose-driven verified Grocery buying before Cave from exact tuple evidence.
-3. Verify V61.26 Cave chooses D3/D2 naturally.
-4. First pet -> one controlled growth mutation -> exact Cave3 demand; then Pet Expedition.
-5. Higher-risk Blessing +5+ only with explicit risk/value policy; Endless later.
+## Immediate next validation
+1. Run normal loader.
+2. Verify Grocery buy if CrystalShards/stone blocker is in current rotation; it must verify and then re-run upgrades before Cave.
+3. Verify Cave V61.30 selects highest unlocked stage at hard level + 78% power floor.
+4. W2 should default to Hell Trial until the one-clear Normal Challenge bridge becomes eligible; after bridge, Hell Challenge should become default.
+5. First pet -> one controlled pet-growth mutation -> exact Cave3 material demand.
+6. Higher-risk Blessing +5+ only with explicit risk/value policy; Endless later.
