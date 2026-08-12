@@ -1,5 +1,5 @@
 --========================================================--
--- IRON SOUL - WEAPON-AWARE SKILL TREE MANAGER V61.20
+-- IRON SOUL - WEAPON-AWARE SKILL TREE MANAGER V61.20.1
 --
 -- Live recon proved:
 --   * PlayerData.SkillTree.Unlock is authoritative server-granted state;
@@ -13,6 +13,7 @@
 --   * For every weapon class present in SkillTree.Unlock, activate every
 --     server-unlocked branch not yet active.
 --   * Verify each activation from PlayerData.SkillTree.Active.
+--   * Wait for authoritative skill data on fresh/mobile Lobby loads.
 --   * Fail closed; skill maintenance must never block Lobby progression.
 --========================================================--
 
@@ -22,10 +23,11 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 local SkillManager = {}
 
-SkillManager.VERSION = "V61.20"
+SkillManager.VERSION = "V61.20.1"
 SkillManager.LOG_FILE = "IronSoul_SkillManager_V61_20.txt"
 SkillManager.MAX_BRANCH = 7
 SkillManager.VERIFY_TIMEOUT = 2.5
+SkillManager.DATA_TIMEOUT = 12
 
 local function status(text)
     text = tostring(text or "")
@@ -35,7 +37,7 @@ local function status(text)
         pcall(fn, "Skills | " .. text)
     end
 
-    print("[IronSoul Skills V61.20]", text)
+    print("[IronSoul Skills V61.20.1]", text)
 end
 
 local function writeLog(lines)
@@ -166,7 +168,18 @@ function SkillManager.Run()
         return false, moduleErr
     end
 
-    local data = pdata()
+    status("Waiting for SkillTree PlayerData")
+
+    local data = waitUntil(function()
+        local current = pdata()
+        local tree = current and current.SkillTree
+        local unlock = tree and tree.Unlock
+
+        if type(unlock) == "table" then
+            return current
+        end
+    end, SkillManager.DATA_TIMEOUT)
+
     local tree = data and data.SkillTree
     local unlock = tree and tree.Unlock
 
