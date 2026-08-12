@@ -1,8 +1,12 @@
--- IRON SOUL - V61.16 COMBAT ENTRY
+-- IRON SOUL - V61.21 COMBAT ENTRY
 --
 -- World1 V61.15 remains frozen/stable. Validated Cave PlaceIds redirect once
 -- through systems/cave.lua, which owns one-run Cave settlement/ticket policy
 -- while reusing this proven combat body internally. World2 remains frozen.
+--
+-- V61.21: before the historical combat controller starts, synchronize the
+-- effective Skill1/Skill2/SkillU loadout to the weapon that Lobby actually left
+-- equipped. This lives outside the giant patched combat chunk.
 
 if not getgenv().IronSoulInsideCaveCombat
     and (
@@ -12,7 +16,7 @@ if not getgenv().IronSoulInsideCaveCombat
     )
 then
     local caveLoader = getgenv().IronSoulLoadRaw
-    assert(type(caveLoader) == "function", "V61.16 Cave loader unavailable")
+    assert(type(caveLoader) == "function", "V61.21 Cave loader unavailable")
 
     local caveOk, caveResult = caveLoader("systems/cave.lua")
     if not caveOk then
@@ -43,7 +47,7 @@ local function getPatcher()
     assert(fn, err)
 
     local patcher = fn()
-    assert(type(patcher) == "function", "V61.16 combat patch loader unavailable")
+    assert(type(patcher) == "function", "V61.21 combat patch loader unavailable")
     return patcher
 end
 
@@ -54,6 +58,30 @@ if type(originalLoadRaw) == "function" then
         originalLoadRaw("systems/world1_motion.lua")
         originalLoadRaw("systems/world1_round_recovery.lua")
         originalLoadRaw("systems/dungeon_route_mapper.lua")
+    end)
+end
+
+-- Weapon-aware skill loadout is deliberately after Lobby/EquipBest has already
+-- completed and before combat initialization. Cave V61.19 chase remains armed
+-- but motionless until the combat controller later announces readiness, so this
+-- bounded maintenance cannot recreate the old pre-controller Cave death race.
+if type(originalLoadRaw) == "function" then
+    pcall(function()
+        local okLoadout, manager = originalLoadRaw("systems/skill_loadout_manager.lua")
+        if okLoadout and type(manager) == "table" and type(manager.Run) == "function" then
+            local okRun, runOk, detail = pcall(manager.Run)
+            if not okRun then
+                local status = getgenv().IronSoulStatus
+                if type(status) == "function" then
+                    pcall(status, "Loadout failed closed | " .. tostring(runOk))
+                end
+            elseif runOk ~= true then
+                local status = getgenv().IronSoulStatus
+                if type(status) == "function" then
+                    pcall(status, "Loadout kept existing | " .. tostring(detail))
+                end
+            end
+        end
     end)
 end
 
