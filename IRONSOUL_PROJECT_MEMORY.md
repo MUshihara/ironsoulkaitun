@@ -48,24 +48,37 @@ All three are **one-room Round1 resource activities**. No Story door/portal trav
 Lobby recon at **Lv16 / Power1713**:
 - `PlayerData.SkillTree.WpnProfs.Sword = 17874`.
 - Server already granted Sword `UnlockSkill1..4=true`; all four Active on recon account.
-- Fist/Greatsword/Heavy/Sickle/Staff each had server-granted `UnlockSkill1=true`; only Sword had proficiency data.
-- `SkillTreeUtil.RemoteEvent = ReplicatedStorage.Framework.Gameplay.SkillTreeSystem.SkillTreeUtil.RemoteEvent`.
-- `TryUnlockSkill` arity3 references player Level + `GetWpnProfById`.
-- `CanUnlockSkill` arity4 checks branch `NeedLv`.
-- `HasEnoughWpnProf` arity4 checks weapon proficiency.
-- `GetWpnProfById` reads `PlayerData.SkillTree.WpnProfs`.
-- **No ore/crystal/currency/material cost appears in the actual level-skill unlock path. Do not invent one.** Gray/The Guide is tutorial/UI context, not a proven skill-payment gate.
-- Server automatically populates `PlayerData.SkillTree.Unlock` when requirements are satisfied. Do not force speculative unlock commands.
+- Fist/Greatsword/Heavy/Sickle/Staff each had server-granted `UnlockSkill1=true`.
+- `TryUnlockSkill` references player Level + weapon proficiency; `CanUnlockSkill` checks branch `NeedLv`; `HasEnoughWpnProf` checks proficiency.
+- **No ore/crystal/currency/material cost appears in the actual level-skill unlock path.** Gray/The Guide is tutorial/UI context, not a proven payment gate.
+- Server automatically populates `PlayerData.SkillTree.Unlock`; do not force speculative unlock commands.
 
-### Skill production V61.20.1
-- `systems/skill_manager.lua` is weapon-aware across every class present in `SkillTree.Unlock`.
-- It waits for authoritative SkillTree PlayerData on fresh/mobile Lobby loads.
-- For every server-granted `UnlockSkillN=true` that is not yet Active, it uses the already-proven free action:
-  `SkillTreeUtil.RemoteEvent:FireServer("ActiveSkill", classId, "UnlockSkillN")`.
-- Every activation is verified from `PlayerData.SkillTree.Active`; failures do not block Lobby.
-- Log: `IronSoul_SkillManager_V61_20.txt`.
-- Existing `systems/cave_audit.lua` is now the post-Lobby-readiness maintenance hook: SkillManager first, then pending Cave reward audit. This hook is already loaded before SMART Cave planning and the historical Lobby body, so new skills are activated before leaving Lobby.
-- Historical Sword-only activation remains behind this and is harmless/idempotent.
+### Skill activation production V61.20.1 — PASSED
+- `systems/skill_manager.lua` activates only server-granted `UnlockSkillN=true` branches using `RemoteEvent("ActiveSkill", classId, key)` and verifies `PlayerData.SkillTree.Active`.
+- Latest test: **9 server-unlocked branches, 5 newly activated, 4 already active, 0 failed**.
+- Newly activated non-Sword Skill1 branches included Fist, Greatsword, Heavy, Sickle and Staff.
+- Skill Tree activation is separate from the equipped combat loadout.
+
+## Weapon-aware best combat loadout V61.21
+Prior V43.1 validation recovered exact protocol:
+- explicit state: `PlayerData.WeaponSkill.Equipped[class][slot]`;
+- effective state: `WeaponUtil:GetWeaponSkillId(player, weaponId, slot)`;
+- eligibility: `WeaponUtil:CanEquipSkill(player, weaponId, slot, skillId)`;
+- write: `WeaponUtil.RemoteEvent:FireServer("EquipSkill", weaponId, slot, skillId)`;
+- active weapon: `WeaponUtil:GetEquippedWeaponClass/GetEquippedWeaponId`.
+
+Production:
+- `systems/skill_loadout_manager.lua` V61.21 runs from the small `systems/combat.lua` entry wrapper, after Lobby equipment choice and before historical combat-controller initialization.
+- This avoids the ordering bug where an early Lobby loadout could be invalidated by a later EquipBest/equipment change.
+- Candidate pool is live `ResSkillTree[class]`: native Skill1/Skill2/SkillU plus only level branches that are both server-unlocked and active.
+- `ResSkillTree` mappings are weapon-specific (Sword, Staff, Heavy, Sickle, Fist, Greatsword; Bow currently may expose empty level entries).
+- Basic candidates compete for Skill1 + Skill2; Ultimate candidates compete for SkillU.
+- Scoring uses live `ResSkill`/`ResSkillStage` + WeaponUtil data: damage events, effective cooldown, action time, range, charge cost, mitigation. It does not assume later-numbered skill = better.
+- `CanEquipSkill` remains authoritative for slot compatibility; every equip mutation is verified with `GetWeaponSkillId`.
+- Failure is fail-closed: keep existing loadout and continue combat.
+- Cave V61.19 safety is preserved: its chaser remains armed/motionless while loadout maintenance runs and only moves after combat-controller readiness.
+- Log: `IronSoul_SkillLoadout_V61_21.txt`.
+- Next test: normal Story or Cave run; verify correct `WeaponClass`, SelectedSkill1/2/U, `Failed=0`, and normal combat/settlement.
 
 ## Settlement / replay / inventory
 - Equipment maintenance threshold 85.
@@ -81,18 +94,16 @@ Known recon surfaces:
 - `FortifyUtil.Fortify` arity3.
 - `EnchantmentUtil.Enchant` arity5; `UnEnchant` arity4.
 - Pet growth modules/remotes mapped (`PetsFortifyUtil`, `PetsUpgradeUtil`).
-- Honor/Season/shop modules/remotes mapped.
 
 Recommended order:
-1. **Verify V61.20 SkillManager once in normal Lobby logs** (`Failed=0`; any newly granted non-Sword branches should activate).
+1. **Verify V61.21 loadout once** with `IronSoul_SkillLoadout_V61_21.txt` and normal combat logs.
 2. Fortify/Blessing protocol + conservative spending.
 3. Enchant exact mutation tuple + rune-demand-aware Cave2 scheduler.
 4. Pet growth + Cave3 demand-aware scheduler.
-5. Honor/Glory/shops.
-6. Endless Tower.
+5. Endless Tower.
 
 ## Reliability / workflow
 - Diagnostics are `.lua`; logs/results may be `.txt`.
 - Production changes in GitHub; helpers fail closed.
-- Keep memory operational/compact; do not restore huge chronological history as default context.
+- Keep memory operational/compact.
 - World2 active movement remains frozen until deliberately revisited; never reuse World1 coordinates/door assumptions there.
