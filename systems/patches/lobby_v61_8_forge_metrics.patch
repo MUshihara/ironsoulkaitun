@@ -90,3 +90,56 @@
                  .. tostring(
                      os.time()
                  )
+@@ -4308,6 +4341,47 @@
+     return
+ end
+ 
++-- V61.23 POST-FORGE UPGRADE PREFLIGHT.
++--
++-- Forge/EquipBest has already settled and the bag gate above is clear. This is
++-- therefore the correct point to spend only guaranteed Fortify upgrades, write
++-- the exact remaining material blocker, then decide whether one paid Cave run
++-- is worth doing. If any helper fails, fall through to the proven Story planner.
++do
++    local loadRaw =
++        getgenv().IronSoulLoadRaw
++
++    if type(loadRaw)
++        == "function"
++    then
++        local okUpgrade,
++            upgrade =
++                loadRaw(
++                    "systems/upgrade_preflight.lua"
++                )
++
++        if okUpgrade
++            and type(upgrade)
++                == "table"
++            and type(upgrade.Run)
++                == "function"
++        then
++            local okRun,
++                handled,
++                detail =
++                    pcall(
++                        upgrade.Run
++                    )
++
++            if okRun
++                and handled == true
++            then
++                important(
++                    "Upgrade planner | Cave handled | "
++                        .. tostring(detail)
++                )
++
++                return true
++            end
++        end
++    end
++end
++
+ --========================================================--
+ -- STORY PLANNER
+ --========================================================--
