@@ -1,17 +1,18 @@
 --========================================================--
--- IRON SOUL - POST-FORGE UPGRADE PREFLIGHT V61.23
+-- IRON SOUL - POST-FORGE UPGRADE PREFLIGHT V61.24
 --
 -- Exact order:
 --   historical Forge/EquipBest
---     -> safe Fortify manager
+--     -> Blessing/Fortify manager
+--     -> Smart Enchant manager
 --     -> exact upgrade-demand file
 --     -> demand-driven SMART Cave
 --     -> otherwise historical Story planner
 --========================================================--
 
 local Preflight = {}
-Preflight.VERSION = "V61.23"
-Preflight.LOG_FILE = "IronSoul_UpgradePreflight_V61_23.txt"
+Preflight.VERSION = "V61.24"
+Preflight.LOG_FILE = "IronSoul_UpgradePreflight_V61_24.txt"
 
 local function write(lines)
     if type(writefile) == "function" then
@@ -24,7 +25,7 @@ local function status(text)
     if type(fn) == "function" then
         pcall(fn, "Upgrade | " .. tostring(text))
     end
-    print("[IronSoul Upgrade V61.23]", tostring(text))
+    print("[IronSoul Upgrade V61.24]", tostring(text))
 end
 
 function Preflight.Run()
@@ -61,13 +62,43 @@ function Preflight.Run()
         return false, "FORTIFY_RUNTIME_FAILED"
     end
 
-    -- A false Fortify result means exact demand could not be trusted. Do not
-    -- spend a Cave ticket using a stale demand file.
+    -- A false Fortify result means its exact material demand cannot be trusted.
     if fortifyOk ~= true then
         table.insert(lines, "Result=FAIL_CLOSED_TO_STORY")
         write(lines)
         status("Fortify unavailable -> Story")
         return false, "FORTIFY_NOT_READY"
+    end
+
+    -- Enchant runs only after Blessing/Fortify has stabilized the keeper gear.
+    -- It performs at most one irreversible mutation and rewrites fresh Cave2
+    -- demand into the same current upgrade-demand file.
+    local okEnchant, enchant = loadRaw("systems/enchant_manager.lua")
+    if not okEnchant or type(enchant) ~= "table" or type(enchant.Run) ~= "function" then
+        table.insert(lines, "Enchant=LOAD_FAILED " .. tostring(enchant))
+        table.insert(lines, "Result=FAIL_CLOSED_TO_STORY")
+        write(lines)
+        return false, "ENCHANT_LOAD_FAILED"
+    end
+
+    local okEnchantRun, enchantOk, enchantDetail = pcall(enchant.Run)
+    table.insert(lines, "EnchantPcall=" .. tostring(okEnchantRun))
+    table.insert(lines, "EnchantOk=" .. tostring(enchantOk))
+    table.insert(lines, "EnchantDetail=" .. tostring(enchantDetail))
+
+    if not okEnchantRun then
+        table.insert(lines, "Result=FAIL_CLOSED_TO_STORY")
+        write(lines)
+        status("Enchant error -> Story | " .. tostring(enchantOk))
+        return false, "ENCHANT_RUNTIME_FAILED"
+    end
+
+    if enchantOk ~= true then
+        -- Never spend a Cave2 ticket from potentially stale Enchant demand.
+        table.insert(lines, "Result=FAIL_CLOSED_TO_STORY")
+        write(lines)
+        status("Enchant unavailable -> Story")
+        return false, "ENCHANT_NOT_READY"
     end
 
     local okPlanner, planner = loadRaw("systems/cave_planner.lua")
