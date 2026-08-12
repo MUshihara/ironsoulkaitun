@@ -1,14 +1,21 @@
 --========================================================--
--- IRON SOUL - SMART HELL FARM PLANNER V61.28
+-- IRON SOUL - HELL-FIRST PROGRESSION PLANNER V61.30
 --
--- Hell is a free material/ore farming fallback, not a replacement for Normal
--- progression. Run order:
---   Normal stage ready -> historical Story planner wins.
---   Normal stage blocked -> highest safe server-unlocked Hell stage.
+-- IMPORTANT UI / CONFIG MAPPING:
+--   Normal: internal Diff 1..5 = Trial/Challenge/Penitent/Torment/Inferno
+--   Hell:   internal Diff 6..10 = Trial/Challenge/Penitent/Torment/Inferno
 --
--- Hell configs omit RecBattlePower in the live V61.27 recon. To fail safely,
--- this planner uses the corresponding Normal difficulty (HellDiff - 5) as a
--- minimum power proxy and adds 15% headroom before entering Hell.
+-- So internal Diff=6 is NOT a sixth visible stage. It is Hell Trial.
+--
+-- Policy:
+--   1) Hell is the default repeat/farm mode because its ore pool is better.
+--   2) Normal is used only as a one-clear UNLOCK BRIDGE when clearing the
+--      corresponding Normal stage will unlock the next Hell stage.
+--   3) After that bridge, the next Lobby cycle returns to Hell.
+--   4) Level recommendation is a hard gate.
+--   5) Power is intentionally aggressive: 78% of the matching Normal stage's
+--      recommended power is accepted. Our validated headless controller is
+--      stronger/safer than ordinary play, while this still avoids blind jumps.
 --========================================================--
 
 local Players = game:GetService("Players")
@@ -18,20 +25,27 @@ local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 local Hell = {}
 
-Hell.VERSION = "V61.28"
-Hell.LOG_FILE = "IronSoul_HellPlanner_V61_28.txt"
-Hell.POWER_SAFETY_MULTIPLIER = 1.15
+Hell.VERSION = "V61.30"
+Hell.LOG_FILE = "IronSoul_HellPlanner_V61_30.txt"
+Hell.POWER_READY_RATIO = 0.78
 Hell.SUPPORTED_WORLDS = {
     World1 = 1,
     World2 = 2,
+}
+Hell.STAGE_NAMES = {
+    [1] = "Trial",
+    [2] = "Challenge",
+    [3] = "Penitent",
+    [4] = "Torment",
+    [5] = "Inferno",
 }
 
 local function status(text)
     local fn = getgenv().IronSoulStatus
     if type(fn) == "function" then
-        pcall(fn, "Hell farm | " .. tostring(text))
+        pcall(fn, "Hell | " .. tostring(text))
     end
-    print("[IronSoul Hell V61.28]", tostring(text))
+    print("[IronSoul Hell V61.30]", tostring(text))
 end
 
 local function write(lines)
@@ -124,91 +138,154 @@ local function allRounds()
     return out
 end
 
-local function normalSibling(rounds, worldId, normalDiff)
+local function normalSibling(rounds, worldId, stage)
     for _, cfg in ipairs(rounds) do
-        if cfg.WorldId == worldId
+        if tostring(cfg.WorldId) == tostring(worldId)
             and tostring(cfg.Style) == "Normal"
-            and tonumber(cfg.DiffLevel) == tonumber(normalDiff)
+            and tonumber(cfg.DiffLevel) == tonumber(stage)
         then
             return cfg
         end
     end
 end
 
-local function nextNormal(data, rounds)
-    local normal = {}
-    for _, cfg in ipairs(rounds) do
-        local order = Hell.SUPPORTED_WORLDS[cfg.WorldId]
-        if order and tostring(cfg.Style) == "Normal" then
-            table.insert(normal, cfg)
-        end
-    end
-
-    table.sort(normal, function(a, b)
-        local aw = Hell.SUPPORTED_WORLDS[a.WorldId] or 999
-        local bw = Hell.SUPPORTED_WORLDS[b.WorldId] or 999
-        if aw ~= bw then return aw < bw end
-        return (tonumber(a.DiffLevel) or 0) < (tonumber(b.DiffLevel) or 0)
-    end)
-
-    for _, cfg in ipairs(normal) do
-        local diff = tonumber(cfg.DiffLevel) or 0
-        if not isCleared(data, cfg.WorldId, diff) and isUnlocked(cfg.WorldId, diff) then
-            return cfg
-        end
-    end
+local function stageName(stage)
+    return Hell.STAGE_NAMES[tonumber(stage)] or ("Stage" .. tostring(stage))
 end
 
-local function chooseHell(data, rounds, lines)
+local function minPowerFor(cfg)
+    local rec = tonumber(cfg and cfg.RecBattlePower) or 0
+    if rec <= 0 then return 0 end
+    return math.ceil(rec * Hell.POWER_READY_RATIO)
+end
+
+local function hellCandidate(data, rounds, lines)
     local lv = level(data)
     local pw = power()
     local worlds = data and data.Worlds or {}
     if worlds.OpenHell ~= true then
         table.insert(lines, "OpenHell=false")
-        return nil, "HELL_NOT_OPEN"
+        return nil
     end
 
-    local candidate = {}
+    local rows = {}
     for _, cfg in ipairs(rounds) do
         local worldOrder = Hell.SUPPORTED_WORLDS[cfg.WorldId]
-        local diff = tonumber(cfg.DiffLevel) or 0
+        local internalDiff = tonumber(cfg.DiffLevel) or 0
+        local stage = internalDiff - 5
+
         if worldOrder
             and tostring(cfg.Style) == "Hell"
-            and diff >= 6
-            and isUnlocked(cfg.WorldId, diff)
-            and lv >= (tonumber(cfg.RecPlayerLv) or 0)
+            and stage >= 1 and stage <= 5
+            and isUnlocked(cfg.WorldId, internalDiff)
         then
-            local sibling = normalSibling(rounds, cfg.WorldId, diff - 5)
-            local basePower = sibling and tonumber(sibling.RecBattlePower) or 0
-            local safePower = math.ceil(basePower * Hell.POWER_SAFETY_MULTIPLIER)
-            local powerReady = basePower <= 0 or pw >= safePower
+            local sibling = normalSibling(rounds, cfg.WorldId, stage)
+            local proxyRecPower = sibling and tonumber(sibling.RecBattlePower) or 0
+            local minPower = sibling and minPowerFor(sibling) or 0
+            local needLv = tonumber(cfg.RecPlayerLv) or 0
+            local levelReady = lv >= needLv
+            local powerReady = proxyRecPower <= 0 or pw >= minPower
 
             table.insert(lines,
                 "HellCandidate=" .. tostring(cfg.WorldId)
-                    .. ",Diff=" .. tostring(diff)
-                    .. ",RecLv=" .. tostring(cfg.RecPlayerLv)
-                    .. ",ProxyNormalPower=" .. tostring(basePower)
-                    .. ",SafePower=" .. tostring(safePower)
+                    .. ",Stage=" .. tostring(stage)
+                    .. ",StageName=" .. stageName(stage)
+                    .. ",InternalDiff=" .. tostring(internalDiff)
+                    .. ",NeedLv=" .. tostring(needLv)
+                    .. ",ProxyNormalPower=" .. tostring(proxyRecPower)
+                    .. ",MinPower78=" .. tostring(minPower)
+                    .. ",LevelReady=" .. tostring(levelReady)
                     .. ",PowerReady=" .. tostring(powerReady)
             )
 
-            if powerReady then
-                table.insert(candidate, {
+            if levelReady and powerReady then
+                table.insert(rows, {
                     Cfg = cfg,
                     WorldOrder = worldOrder,
-                    Diff = diff,
-                    SafePower = safePower,
+                    Stage = stage,
+                    InternalDiff = internalDiff,
+                    MinPower = minPower,
                 })
             end
         end
     end
 
-    table.sort(candidate, function(a, b)
+    table.sort(rows, function(a, b)
         if a.WorldOrder ~= b.WorldOrder then return a.WorldOrder > b.WorldOrder end
-        return a.Diff > b.Diff
+        return a.Stage > b.Stage
     end)
 
-    return candidate[1], candidate[1] and "READY" or "NO_SAFE_HELL"
+    return rows[1]
+end
+
+local function bridgeCandidate(data, rounds, lines)
+    local lv = level(data)
+    local pw = power()
+    local rows = {}
+
+    -- A Hell stage is unlocked by the corresponding Normal clear key:
+    -- Hell Trial -> World|1, Hell Challenge -> World|2, etc.
+    -- Therefore Normal is used only when it can unlock a currently locked
+    -- higher Hell stage.
+    for _, hellCfg in ipairs(rounds) do
+        local worldOrder = Hell.SUPPORTED_WORLDS[hellCfg.WorldId]
+        local internalDiff = tonumber(hellCfg.DiffLevel) or 0
+        local stage = internalDiff - 5
+
+        if worldOrder
+            and tostring(hellCfg.Style) == "Hell"
+            and stage >= 2 and stage <= 5
+            and not isUnlocked(hellCfg.WorldId, internalDiff)
+        then
+            local normalCfg = normalSibling(rounds, hellCfg.WorldId, stage)
+            if normalCfg then
+                local normalUnlocked = isUnlocked(hellCfg.WorldId, stage)
+                local normalCleared = isCleared(data, hellCfg.WorldId, stage)
+                local needLv = tonumber(normalCfg.RecPlayerLv) or 0
+                local recPower = tonumber(normalCfg.RecBattlePower) or 0
+                local minPower = minPowerFor(normalCfg)
+                local levelReady = lv >= needLv
+                local powerReady = recPower <= 0 or pw >= minPower
+
+                table.insert(lines,
+                    "BridgeCandidate=" .. tostring(hellCfg.WorldId)
+                        .. ",UnlockHellStage=" .. tostring(stage)
+                        .. ",StageName=" .. stageName(stage)
+                        .. ",NormalInternalDiff=" .. tostring(stage)
+                        .. ",HellInternalDiff=" .. tostring(internalDiff)
+                        .. ",NormalUnlocked=" .. tostring(normalUnlocked)
+                        .. ",NormalCleared=" .. tostring(normalCleared)
+                        .. ",NeedLv=" .. tostring(needLv)
+                        .. ",RecPower=" .. tostring(recPower)
+                        .. ",MinPower78=" .. tostring(minPower)
+                        .. ",LevelReady=" .. tostring(levelReady)
+                        .. ",PowerReady=" .. tostring(powerReady)
+                )
+
+                if normalUnlocked
+                    and not normalCleared
+                    and levelReady
+                    and powerReady
+                then
+                    table.insert(rows, {
+                        Cfg = normalCfg,
+                        WorldOrder = worldOrder,
+                        Stage = stage,
+                        HellInternalDiff = internalDiff,
+                        MinPower = minPower,
+                    })
+                end
+            end
+        end
+    end
+
+    table.sort(rows, function(a, b)
+        if a.WorldOrder ~= b.WorldOrder then return a.WorldOrder > b.WorldOrder end
+        -- Unlock the next missing visible stage in order, not a later skip.
+        return a.Stage < b.Stage
+    end)
+
+    return rows[1]
 end
 
 local function roomContainer()
@@ -315,6 +392,56 @@ local function enterRoom(room)
     return false
 end
 
+local function ensureRoom(lines)
+    local room
+    local existing = enteredRoomId()
+    if existing and existing ~= "" then
+        room = roomById(existing)
+    else
+        room = findFreeRoom()
+        if not room then
+            table.insert(lines, "Result=NO_FREE_ROOM")
+            write(lines)
+            return false
+        end
+        if not enterRoom(room) then
+            table.insert(lines, "Result=ROOM_ENTER_FAILED")
+            write(lines)
+            return false
+        end
+    end
+
+    local roomId = enteredRoomId()
+    if not roomId or roomId == "" then
+        table.insert(lines, "Result=ENTER_ROOM_ID_MISSING")
+        write(lines)
+        return false
+    end
+    return true
+end
+
+local function startMatch(cfg, modeLabel, lines, detail)
+    if not ensureRoom(lines) then return false, "ROOM_FAILED" end
+
+    local queueBootstrap = getgenv().IronSoulQueueBootstrap
+    if type(queueBootstrap) ~= "function"
+        or not queueBootstrap(modeLabel)
+    then
+        table.insert(lines, "Result=QUEUE_FAILED")
+        write(lines)
+        return false, "QUEUE_FAILED"
+    end
+
+    table.insert(lines, "Chosen=" .. detail)
+    table.insert(lines, "Result=START_" .. modeLabel)
+    write(lines)
+
+    WorldUtil.RemoteEvent:FireServer("SelectWorld", cfg.WorldId, cfg.DiffLevel)
+    task.wait(0.18)
+    GameMatchRE:FireServer("CreatRoom", cfg.WorldId, cfg.DiffLevel, 1)
+    return true, detail
+end
+
 function Hell.Run()
     local config = getgenv().IronSoulConfig or {}
     if config.HELL_AUTO == false then return false, "DISABLED" end
@@ -331,87 +458,68 @@ function Hell.Run()
         "Level=" .. tostring(level(data)),
         "Power=" .. tostring(power()),
         "OpenHell=" .. tostring(data.Worlds and data.Worlds.OpenHell),
+        "PowerReadyRatio=" .. tostring(Hell.POWER_READY_RATIO),
+        "Policy=HELL_DEFAULT_NORMAL_ONLY_UNLOCK_BRIDGE",
     }
 
-    local normal = nextNormal(data, rounds)
-    if normal then
-        local needLv = tonumber(normal.RecPlayerLv) or 0
-        local needPower = tonumber(normal.RecBattlePower) or 0
-        local normalReady = level(data) >= needLv and power() >= needPower
-        table.insert(lines,
-            "NextNormal=" .. tostring(normal.WorldId)
-                .. ",Diff=" .. tostring(normal.DiffLevel)
-                .. ",NeedLv=" .. tostring(needLv)
-                .. ",NeedPower=" .. tostring(needPower)
-                .. ",Ready=" .. tostring(normalReady)
-        )
-        if normalReady then
-            table.insert(lines, "Result=NORMAL_READY")
-            write(lines)
-            return false, "NORMAL_READY"
-        end
-    else
-        table.insert(lines, "NextNormal=none")
-    end
-
-    local chosen, reason = chooseHell(data, rounds, lines)
-    if not chosen then
-        table.insert(lines, "Result=" .. tostring(reason))
+    if not (data.Worlds and data.Worlds.OpenHell == true) then
+        table.insert(lines, "Result=HELL_NOT_OPEN")
         write(lines)
-        return false, reason
+        return false, "HELL_NOT_OPEN"
     end
 
-    local room
-    local existing = enteredRoomId()
-    if existing and existing ~= "" then
-        room = roomById(existing)
-    else
-        room = findFreeRoom()
-        if not room then
-            table.insert(lines, "Result=NO_FREE_ROOM")
-            write(lines)
-            return false, "NO_FREE_ROOM"
-        end
-        if not enterRoom(room) then
-            table.insert(lines, "Result=ROOM_ENTER_FAILED")
-            write(lines)
-            return false, "ROOM_ENTER_FAILED"
+    local bestHell = hellCandidate(data, rounds, lines)
+    local bridge = bridgeCandidate(data, rounds, lines)
+
+    -- Use a one-clear Normal bridge only when it unlocks a higher Hell stage in
+    -- the same/higher world than the Hell stage we would otherwise farm.
+    if bridge then
+        local shouldBridge = not bestHell
+            or bridge.WorldOrder > bestHell.WorldOrder
+            or (bridge.WorldOrder == bestHell.WorldOrder and bridge.Stage > bestHell.Stage)
+
+        if shouldBridge then
+            local cfg = bridge.Cfg
+            local label = stageName(bridge.Stage)
+            local detail = tostring(cfg.WorldId)
+                .. "_NORMAL_UNLOCK_BRIDGE_" .. label
+                .. "_InternalDiff" .. tostring(cfg.DiffLevel)
+                .. "_UnlocksHellInternalDiff" .. tostring(bridge.HellInternalDiff)
+
+            status("UNLOCK BRIDGE " .. tostring(cfg.WorldId) .. " Normal " .. label
+                .. " | power=" .. tostring(power()) .. "/min=" .. tostring(bridge.MinPower))
+
+            return startMatch(
+                cfg,
+                "NORMAL_UNLOCK_BRIDGE",
+                lines,
+                detail
+            )
         end
     end
 
-    local roomId = enteredRoomId()
-    if not roomId or roomId == "" then
-        table.insert(lines, "Result=ENTER_ROOM_ID_MISSING")
+    if not bestHell then
+        table.insert(lines, "Result=NO_READY_HELL")
         write(lines)
-        return false, "ENTER_ROOM_ID_MISSING"
+        return false, "NO_READY_HELL"
     end
 
-    local cfg = chosen.Cfg
-    local queueBootstrap = getgenv().IronSoulQueueBootstrap
-    if type(queueBootstrap) ~= "function"
-        or not queueBootstrap("smart hell -> " .. tostring(cfg.WorldId) .. " D" .. tostring(cfg.DiffLevel))
-    then
-        table.insert(lines, "Result=QUEUE_FAILED")
-        write(lines)
-        return false, "QUEUE_FAILED"
-    end
+    local cfg = bestHell.Cfg
+    local label = stageName(bestHell.Stage)
+    local detail = tostring(cfg.WorldId)
+        .. "_HELL_" .. label
+        .. "_InternalDiff" .. tostring(bestHell.InternalDiff)
 
-    table.insert(lines,
-        "Chosen=" .. tostring(cfg.WorldId)
-            .. ",Diff=" .. tostring(cfg.DiffLevel)
-            .. ",SafePower=" .. tostring(chosen.SafePower)
+    status("START " .. tostring(cfg.WorldId) .. " Hell " .. label
+        .. " | internalDiff=" .. tostring(bestHell.InternalDiff)
+        .. " | power=" .. tostring(power()) .. "/min=" .. tostring(bestHell.MinPower))
+
+    return startMatch(
+        cfg,
+        "HELL_DEFAULT",
+        lines,
+        detail
     )
-    table.insert(lines, "Result=START_HELL")
-    write(lines)
-
-    status("START " .. tostring(cfg.WorldId) .. " Hell D" .. tostring(cfg.DiffLevel)
-        .. " | power=" .. tostring(power()) .. "/safe>=" .. tostring(chosen.SafePower))
-
-    WorldUtil.RemoteEvent:FireServer("SelectWorld", cfg.WorldId, cfg.DiffLevel)
-    task.wait(0.18)
-    GameMatchRE:FireServer("CreatRoom", cfg.WorldId, cfg.DiffLevel, 1)
-
-    return true, tostring(cfg.WorldId) .. "_HELL_D" .. tostring(cfg.DiffLevel)
 end
 
 getgenv().IronSoulHellPlanner = Hell
