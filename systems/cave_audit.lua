@@ -1,11 +1,16 @@
 --========================================================--
--- IRON SOUL - CAVE POST-LOBBY AUDIT V61.17
+-- IRON SOUL - POST-LOBBY READY MAINTENANCE V61.20
 --
--- Cave reward/player-data replication is not guaranteed to be visible inside
--- the Cave place at the instant Settlement flips true. Reconcile the pending
--- Cave baseline only AFTER normal Lobby PlayerData readiness.
+-- This module is loaded by systems/lobby.lua only AFTER authoritative Lobby
+-- PlayerData readiness. Keep free/idempotent maintenance here so the historical
+-- Lobby body and its proven patch chain remain untouched.
 --
--- This module is read/audit only. It does not spend, claim, matchmake, or move.
+-- Order:
+--   1) weapon-aware SkillTree activation for server-unlocked branches;
+--   2) reconcile any pending Cave reward/ticket baseline.
+--
+-- Cave audit itself remains read-only. Skill activation spends no currency and
+-- never invents unlocks; it only activates branches already granted by server.
 --========================================================--
 
 local Players = game:GetService("Players")
@@ -14,6 +19,46 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 local PENDING_FILE = "IronSoul_CavePending_V61_17.txt"
 local AUDIT_FILE = "IronSoul_CaveAudit_V61_17.txt"
+
+local function status(text)
+    local fn = getgenv().IronSoulStatus
+    if type(fn) == "function" then
+        pcall(fn, tostring(text or ""))
+    end
+end
+
+--========================================================--
+-- FREE SKILL MAINTENANCE
+--========================================================--
+
+do
+    local loadRaw = getgenv().IronSoulLoadRaw
+
+    if type(loadRaw) == "function" then
+        local okSkill, manager = loadRaw("systems/skill_manager.lua")
+
+        if okSkill
+            and type(manager) == "table"
+            and type(manager.Run) == "function"
+        then
+            local okRun, handled, detail = pcall(manager.Run)
+
+            if not okRun then
+                status("Skill manager failed closed | " .. tostring(handled))
+            elseif handled == true then
+                status("Skill maintenance complete")
+            else
+                status("Skill maintenance skipped | " .. tostring(detail or handled))
+            end
+        elseif not okSkill then
+            status("Skill manager unavailable | " .. tostring(manager))
+        end
+    end
+end
+
+--========================================================--
+-- CAVE POST-LOBBY AUDIT
+--========================================================--
 
 local function parse(text)
     local out = {}
@@ -120,7 +165,7 @@ local ticketAtCaveStart = tonumber(pending.TicketAtCaveStart)
 local ticketBeforeEntry = tonumber(pending.TicketBeforeEntry)
 
 local rows = {
-    "Version=V61.17",
+    "Version=V61.20",
     "Resolved=true",
     "PlaceId=" .. tostring(pending.PlaceId),
     "WorldId=" .. tostring(pending.WorldId),
@@ -154,17 +199,13 @@ if type(writefile) == "function" then
     pcall(writefile, PENDING_FILE, serialize(pending))
 end
 
-local status = getgenv().IronSoulStatus
-if type(status) == "function" then
-    pcall(
-        status,
-        "Cave audit | "
-            .. tostring(pending.WorldId)
-            .. " | "
-            .. tostring(kind)
-            .. " +"
-            .. tostring(beforeReward and (afterReward - beforeReward) or "?")
-    )
-end
+status(
+    "Cave audit | "
+        .. tostring(pending.WorldId)
+        .. " | "
+        .. tostring(kind)
+        .. " +"
+        .. tostring(beforeReward and (afterReward - beforeReward) or "?")
+)
 
 return true
