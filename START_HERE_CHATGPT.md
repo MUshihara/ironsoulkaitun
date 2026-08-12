@@ -88,29 +88,39 @@ Once an egg drops/arrives, V61.25 should start it automatically.
 - Controlled Burn test spent 2400 Currency1, consumed exact stone, power616->696.
 - Cave2 demand is exact state, never old unreliable `3/4 runes` counting.
 
-## Hell mode — NEXT, NOT YET PRODUCTION
-Latest PlayerData has `Worlds.OpenHell=true`.
-- Current historical Story planner explicitly filters `cfg.Style == "Normal"`, so Hell is **not currently selected**.
-- FirstEgg recon can display World1 Diff6-D8 rewards with Hellstone1 and World2 higher diff rewards with Hell ores, strongly indicating useful Hell farming exists.
-- Do not blindly hardcode Diff6 as Hell. Next diagnostic `IronSoul_Hell_Grocery_Recon_V61_27.lua` enumerates live non-Normal/Hell configs, recommendations, unlock state and rewards.
-- Intended policy after proof: **advance Normal progression whenever ready; if next Normal stage is power-blocked, farm the highest safe unlocked Hell stage for better ores/power, then re-check Normal progression.**
+## Smart Hell V61.28 — PRODUCTION, FIRST LIVE CLEAR PENDING
+`systems/hell_planner.lua` commit `c0c17769225dc2d356e0de58f5272ae2cbb9c834`; `upgrade_preflight.lua` integration commit `98391fc0e67ba88be73a6aa050bac7f961d2d198`.
+- Live V61.27 recon proves `PlayerData.Worlds.OpenHell=true` and 20 Hell configs across World1-World4.
+- World1 Hell D6-D10 are unlocked on latest account; World2 Hell D6 is also unlocked.
+- Hell config `RecBattlePower` is blank, so production does **not** invent a number. It uses the corresponding Normal difficulty `(HellDiff-5)` as a minimum power proxy plus 15% safety headroom.
+- Normal progression always wins if its next unlocked stage meets Level+Power.
+- If Normal is blocked and no paid Cave action handled the cycle, choose the highest safe server-unlocked Hell tier in currently supported World1/World2.
+- Latest Lv22/P4346 account should choose **World2 Hell D6**: W2 Normal D1 proxy power3600 -> safe threshold4140; account power4346 passes.
+- W2 Hell D6 reward display includes Hellstone3/Hellstone2/Hexbane/Bloodshard/Verdanite.
+- This is a trial of real production logic; preserve logs and mark stable only after first clean unattended Hell clear.
 
-## Grocery / shops — NEXT
-Known API:
-- Grocery = `ConsumableShopUtil` / `ScreenConsumableShop`.
-- Utility exposes `GetShopConfig`, `GetShopData`, `GetShopSnapshot`, `GetAllShopConfigs`, `GetItemStock`, `BuyItem`, refresh helpers and RemoteEvent.
-- Gold/Bond/Honor/Season shops also exist.
-- Production buying is NOT enabled yet because exact current stock IDs, prices, currencies and `BuyItem` tuple have not been live-validated.
-- Target architecture: upgrade manager publishes exact blocker -> shop manager checks stock/price/reserve -> buys and verifies if economical -> only then spend Cave ticket.
-- V61.27 read-only recon maps this next.
+## Grocery / shops — CONFIG/ROTATION PROVEN; PURCHASE TUPLE PENDING
+Live V61.27 recon proves:
+- Grocery engine = `ConsumableShopUtil`; configs `Gold` and `Bond`.
+- Gold shop currency=`Currency1`, 10 items/refresh, refresh interval5 minutes, max15 daily purchases.
+- Bond shop currency=`BondCoin`, 10 items/day, max5 daily purchases.
+- Gold config can sell exact progression resources: `CrystalShards` (3 for 1000), tier-3 Burn/Methysis/Frost/Corrode stones (3000), BrokenDragonScale (5 for1000), WholeDragonScale (5 for2000), DragonClaw (5 for3500), DragonHorn (5 for5000), DragonTear (5 for7500), plus ores and potions.
+- Potions include Gold/EXP/Luck/Drop/Attack/HP/CH.
+- Season shop can rotate Ticket1, Hellstone8, crystals, DragonTear, scrolls and potions; current rotation is dynamic.
+- Latest Gold rotation had Hellstone3, Earthmaw, CrystalGem, CrystalPrism, CrystalFlake, Corrode_3, GoldPotion, AtkPotion, BrokenDragonScale and DragonTear.
+- Production buying remains disabled until the exact `ConsumableShopUtil.BuyItem` client tuple/call site is proven. Do not guess spending remotes.
+- Focused read-only diagnostic: `IronSoul_Shop_Protocol_Recon_V61_29.lua`.
+
+Target shop architecture:
+`exact upgrade blocker -> inspect current Gold/Season/Bond rotation -> price/reserve check -> verified purchase -> recalc blocker -> only then paid Cave`.
 
 ## Current upgrade chain
-`Forge/EquipBest -> Pet acquisition -> Blessing/Fortify -> Smart Enchant -> highest-ready SMART Cave -> Story`.
+`Forge/EquipBest -> Pet acquisition -> Blessing/Fortify -> Smart Enchant -> highest-ready SMART Cave -> Smart Hell fallback when Normal is blocked -> Normal Story`.
 
 ## Next phase
-1. Run standalone `IronSoul_Hell_Grocery_Recon_V61_27.lua` in Lobby and inspect its txt.
-2. Build smart Hell fallback + exact purpose-driven shop purchasing from that evidence.
-3. Normal loader test V61.26 Cave highest-difficulty selection naturally.
+1. Run normal loader and validate first World2 Hell D6 unattended clear; send Hell/combat logs if it fails.
+2. Run standalone `IronSoul_Shop_Protocol_Recon_V61_29.lua` in Lobby; use result to implement verified purpose-driven Grocery buying before Cave.
+3. Let V61.26 Cave difficulty resolver run naturally and verify selected D3/D2 tiers.
 4. After first pet: controlled pet-growth mutation -> exact Cave3 material demand -> Pet Expedition later.
 5. Higher-risk Blessing +5+ only with explicit risk/value policy; Endless later.
 
