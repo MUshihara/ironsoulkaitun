@@ -29,14 +29,16 @@ Fresh accounts have progressed repeatedly through World1 D1/D2/D3/D4/D5. V61.15 
 - Cave2/Cave3 validated on mobile with same headless/CFrame path.
 - One Cave settlement -> Lobby; no paid replay spam.
 
-## V61.23 demand-driven SMART Cave — PASSED FOR CAVE1
+## Demand-driven SMART Cave V61.24
 - Fixed stock buffers are retired from automatic spending.
 - Upgrade planning runs **after Forge/EquipBest and safe upgrades**, before Story.
-- Current chain: Forge/EquipBest -> Fortify/Blessing -> exact demand -> SMART Cave -> otherwise Story.
-- Cave1 is selected only from real `CrystalShardsMissing`.
-- Automatic Cave2 is held until Enchant publishes exact stone demand; old EnchantedStone table-entry counting was unreliable.
-- Automatic Cave3 held until pet-upgrade manager publishes exact costs.
+- Current order: Forge/EquipBest -> Blessing/Fortify -> Smart Enchant -> exact demand -> SMART Cave -> otherwise Story.
+- **Cave1** only from real `CrystalShardsMissing` for guaranteed Blessing/Fortify demand.
+- **Cave2** only when a useful +4 keeper still has an existing empty enchant slot AND Smart Enchant has zero usable stones. It does NOT use the old unreliable `3/4 runes` stock target.
+- Cave1 has higher priority than Cave2 when both blockers exist because guaranteed Fortify is deterministic.
+- **Cave3** held until pet-upgrade manager publishes exact material costs.
 - Trial only; reserve 5 Ticket1; cooldown 360s.
+- Decision log: `IronSoul_CavePlannerDecision_V61_24.txt`.
 
 ## Skill/combat baseline
 - Skill Tree Level branches = Level + weapon proficiency; `skill_manager.lua` activates server-granted branches only.
@@ -50,7 +52,7 @@ Fresh accounts have progressed repeatedly through World1 D1/D2/D3/D4/D5. V61.15 
 - Do not create a separate Blessing module path unless future live evidence proves another mechanic.
 - Crystal Shards/Flakes + Currency1 are used; success chance falls as Fortify level rises.
 
-## V61.23 Fortify/Blessing — PRODUCTION PASS
+## V61.23 Blessing/Fortify — PRODUCTION PASS
 Policy:
 - auto only guaranteed steps through +4;
 - primary Weapon -> equipped Armor -> Weapon2 only if >=80% primary power;
@@ -63,32 +65,43 @@ Latest production proof at Lv20/P2603:
 - 6 actions, 0 failures.
 - weak `Single_KnightSword` Weapon2 correctly skipped.
 - shards `17 -> 3`.
-- Helmet remained +1 and exact demand became: CrystalFlake4 have23, CrystalShards7 have3 with reserve2 => **Missing6**, Currency1 7800 have69286 => enough.
-- SMART Cave then selected **Cave1** with `FortifyCrystalMissing=6` and Ticket1=26.
-- This proves **upgrade -> blocker -> correct material Cave** end-to-end.
+- Helmet remained +1 and exact demand became CrystalShards Missing6 after reserve.
+- SMART Cave selected Cave1 from that real blocker.
 
-## Enchant — CURRENT NEXT TEST V61.24
-Recovered older V17/V18 protocol:
-- write: `EquipmentRE:FireServer("Enchant", equipmentUUID, enchantSlotKey, enchantedStoneUUID)`.
-- target must have an existing empty `Enchantments[slot]` table (`Type == nil`).
-- stone must exist in `PlayerData.EnchantedStone.Owned`.
-- cost: `EnchantmentUtil:GetEnchantCost(equipmentRarity, stoneRarity)`; recovered formula gearRarity * stoneRarity * 200 Currency1.
-- success consumes stone and fills slot.
-- do NOT auto-UnEnchant; DetachTool consumption/stone restoration are not safe enough.
-- No trustworthy historical live mutation report was found, so do one controlled validation before 24/7 integration.
+## V61.24 Enchant — LIVE MUTATION PASSED / PRODUCTION ENABLED
+Exact verified server write:
+`EquipmentRE:FireServer("Enchant", equipmentUUID, enchantSlotKey, enchantedStoneUUID)`.
 
-User has standalone `IronSoul_Enchant_Controlled_V61_24.lua`:
-- run in Lobby, no normal loader required;
-- equipped Fortify>=4 keeper only;
-- primary Weapon first, then Armor; skips Weapon2;
-- requires existing empty slot;
-- lowest-rarity stone first for this first irreversible test;
-- Currency1 reserve10000;
-- one action maximum;
-- verifies installed slot + exact stone UUID consumed;
-- output `IronSoul_EnchantControlled_V61_24.txt`.
+Live controlled proof on `Single_Gray` +4:
+- target slot1 was an existing empty enchant slot;
+- selected `Burn_1` rarity2;
+- `GetEnchantCost` returned 2400 Currency1;
+- FireServer succeeded;
+- slot verified populated with Burn fields;
+- exact stone UUID consumed;
+- Currency1 `69286 -> 66886` (-2400);
+- official equipment power `616 -> 696` (+80);
+- Result `ENCHANTED_VERIFIED`.
 
-If V61.24 passes: build production smart Enchant scorer/demand publisher and re-enable Cave2 based on exact Enchant need, then pet upgrades/Cave3, then smart shops.
+Production `systems/enchant_manager.lua` V61.24:
+- runs after Blessing/Fortify;
+- minimum keeper Fortify +4;
+- active/primary weapon first, then strongest equipped Armor;
+- secondary weapon only if competitive (>=80% active weapon power);
+- existing empty enchant slots only;
+- one enchant maximum/Lobby;
+- preserve Currency1 10000;
+- never overwrite/reroll/UnEnchant/use DetachTool;
+- available stones ranked from live effect data (`DMG`, `Chance`, `Duration`, rarity) rather than old weakest-first validation policy;
+- each mutation verified from installed slot + exact stone consumption;
+- writes `EnchantEligibleEmptySlots`, `EnchantUsableStones`, `EnchantStoneMissing`, `Cave2Needed` into `IronSoul_UpgradeDemand_V61_23.txt`.
+- log `IronSoul_EnchantManager_V61_24.txt`.
+
+## Next phase
+1. One normal production-loader cycle to verify V61.24 Smart Enchant + Cave1/Cave2 demand handoff.
+2. Then pet growth (`PetsFortifyUtil` / `PetsUpgradeUtil`) + exact Cave3 demand.
+3. Then smart shops/currency spending.
+4. Endless Tower after core upgrade economy is stable.
 
 ## Settlement / replay
 - Inventory maintenance threshold 85; full/high inventory at settlement -> Lobby immediately.
