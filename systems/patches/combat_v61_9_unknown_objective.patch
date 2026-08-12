@@ -153,10 +153,115 @@
                          -- V61.5 24/7 recovery.
                          --
                          -- Run even when the player is still close to the old
-@@ -6866,6 +6983,67 @@
+@@ -6866,6 +6983,127 @@
                      nearestSpatialEnemy(
                          CFG.GATE_ENEMY_RECOVERY_RADIUS
                      )
++
++            -- V61.32 WORLD2 FAR-WAVE HARD STALL BOUND.
++            --
++            -- One hour soak found one Normal Penitent run that reached:
++            --   GameRound=5 / completedRound=4 / local=0 / global=19
++            --   nearest real enemy ~1049 studs away
++            -- and then remained in GATE for ~895 seconds with no watchdog
++            -- recovery. Do NOT guess a 1000-stud World2 route here. If this
++            -- exact bad signature persists for 45 seconds, end the run through
++            -- the already-proven timeout/failure -> Lobby path so 24/7 farming
++            -- loses under a minute instead of ~15 minutes.
++            --
++            -- Scratch state uses getgenv() deliberately: no new top-level
++            -- locals are added to the already register-heavy combat chunk.
++            getgenv().IronSoulW2FarWaveStall =
++                getgenv().IronSoulW2FarWaveStall
++                or {
++                    Since = nil,
++                    Round = nil,
++                    Enemy = nil,
++                    Distance = nil,
++                }
++
++            if tostring(
++                    ReplicatedStorage:
++                        FindFirstChild("GameRoundCfg")
++                        and ReplicatedStorage.GameRoundCfg:
++                            GetAttribute("WorldId")
++                    or ""
++                ) == "World2"
++                and not gateEnemy
++            then
++                getgenv().IronSoulW2FarWaveStall.Enemy,
++                    getgenv().IronSoulW2FarWaveStall.Distance =
++                        nearestSpatialEnemy(math.huge)
++
++                if getgenv().IronSoulW2FarWaveStall.Enemy
++                    and tonumber(
++                        getgenv().IronSoulW2FarWaveStall.Distance
++                    )
++                    and tonumber(
++                        getgenv().IronSoulW2FarWaveStall.Distance
++                    ) >= 700
++                then
++                    if getgenv().IronSoulW2FarWaveStall.Round
++                            ~= gameRound()
++                        or not getgenv().IronSoulW2FarWaveStall.Since
++                    then
++                        getgenv().IronSoulW2FarWaveStall.Round =
++                            gameRound()
++
++                        getgenv().IronSoulW2FarWaveStall.Since =
++                            os.clock()
++
++                        if getgenv().IronSoulTelemetry then
++                            getgenv().IronSoulTelemetry:
++                                Event(
++                                    "WORLD2_FAR_WAVE_STALL_ARM",
++                                    "round="
++                                        .. tostring(gameRound())
++                                        .. " dist="
++                                        .. string.format(
++                                            "%.1f",
++                                            getgenv().IronSoulW2FarWaveStall.Distance
++                                        )
++                                )
++                        end
++
++                    elseif os.clock()
++                            - getgenv().IronSoulW2FarWaveStall.Since
++                            >= 45
++                    then
++                        if getgenv().IronSoulTelemetry then
++                            getgenv().IronSoulTelemetry:
++                                Event(
++                                    "WORLD2_FAR_WAVE_STALL_ABORT",
++                                    "round="
++                                        .. tostring(gameRound())
++                                        .. " dist="
++                                        .. string.format(
++                                            "%.1f",
++                                            getgenv().IronSoulW2FarWaveStall.Distance
++                                        )
++                                        .. " age="
++                                        .. string.format(
++                                            "%.1f",
++                                            os.clock()
++                                                - getgenv().IronSoulW2FarWaveStall.Since
++                                        )
++                                )
++                        end
++
++                        -- Reuse existing post-combat failed/timed-out handling.
++                        -- No route, prop, portal, or progression state is faked.
++                        stopReason = "GLOBAL_TIMEOUT"
++                        continue
++                    end
++                else
++                    getgenv().IronSoulW2FarWaveStall.Since = nil
++                    getgenv().IronSoulW2FarWaveStall.Round = nil
++                end
++            else
++                getgenv().IronSoulW2FarWaveStall.Since = nil
++                getgenv().IronSoulW2FarWaveStall.Round = nil
++            end
 +
 +            -- V61.9 HARD EMPTY-GATE RECOVERY.
 +            --
