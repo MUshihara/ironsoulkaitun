@@ -202,7 +202,7 @@
 +            )
 +    end
  end
-@@ -5378,13 +5462,28 @@
+@@ -5378,13 +5462,39 @@
              trackElevationDamage(
                  enemy
              )
@@ -218,14 +218,26 @@
 +            lastBasic =
 +                os.clock()
 +
-+        -- SkillU is not an ordinary third cooldown skill. Live ResSkill data
-+        -- proves Ultimates consume Charge (e.g. Ashwarden_Skill_US=80), while
-+        -- BaseAttack/normal skills GenerateCharge. Only attempt the native
-+        -- Ultimate callback on boss/high-HP targets; the game remains the
-+        -- authority on whether enough charge exists to accept the cast.
++        -- SkillU is charge-gated. V61.31 additionally reserves it for a true
++        -- account-relative threat instead of every 1500+ HP medium mob.
 +        elseif Callbacks.SkillU
 +            and enemyHealth(enemy)
-+            and enemyHealth(enemy) >= CFG.ADAPTIVE_BOSS_HP
++            and enemyHealth(enemy)
++                >= math.max(
++                    tonumber(CFG.ADAPTIVE_BOSS_HP)
++                        or 1500,
++                    (
++                        Humanoid
++                        and tonumber(Humanoid.MaxHealth)
++                        or 0
++                    )
++                        * (
++                            tonumber(
++                                CFG.ADAPTIVE_THREAT_PLAYER_HP_MULTIPLIER
++                            )
++                            or 3.0
++                        )
++                )
 +            and skillReady("SkillU")
 +        then
 +            if castSkill("SkillU") then
