@@ -1,22 +1,16 @@
 --========================================================--
--- IRON SOUL - DEMAND-DRIVEN SMART CAVE PLANNER V61.26
+-- IRON SOUL - DEMAND-DRIVEN SMART CAVE PLANNER V61.30
 --
--- Paid Cave selection is driven by real progression blockers.
--- Every requested Cave uses the HIGHEST live Normal difficulty that is:
---   * configured for that Cave;
---   * server-unlocked;
---   * within current level + power recommendation;
---   * compatible with the current Ticket1 policy.
+-- Paid Cave selection stays progression-demand driven, but stage selection is
+-- now intentionally more aggressive for our validated headless controller:
+--   * server-unlocked stage is mandatory;
+--   * recommended LEVEL is a hard gate;
+--   * POWER may be about 22% below recommendation (78% floor);
+--   * highest eligible currently-unlocked Cave stage wins.
 --
--- Demand sources:
---   Cave1 <- guaranteed Blessing/Fortify CrystalShards blocker.
---   Cave2 <- useful +4 keeper has empty enchant slot but no usable stone.
---   Cave3 <- no owned pet AND no owned egg, but an egg-capable D2+ Cave3
---            difficulty is ready. Later pet-growth material demand can join it.
---
--- Important live proof:
---   Cave3 D1 has no displayed egg reward.
---   Cave3 D2/D3/D4 display Random_Egg while still costing Ticket1 x1.
+-- This reflects the user's real live behavior: Cave is a one-room arena, our
+-- movement/combat is much faster/safer than normal play, and exact 100% power
+-- recommendation was unnecessarily conservative.
 --========================================================--
 
 local Players = game:GetService("Players")
@@ -26,13 +20,14 @@ local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 local Planner = {}
 
-Planner.VERSION = "V61.26"
+Planner.VERSION = "V61.30"
 Planner.TICKET_RESERVE = 5
 Planner.COOLDOWN_SECONDS = 360
+Planner.POWER_READY_RATIO = 0.78
 Planner.PENDING_FILE = "IronSoul_CavePending_V61_17.txt"
 Planner.STATE_FILE = "IronSoul_CavePlanner_V61_18.txt"
 Planner.DEMAND_FILE = "IronSoul_UpgradeDemand_V61_23.txt"
-Planner.DECISION_FILE = "IronSoul_CavePlannerDecision_V61_26.txt"
+Planner.DECISION_FILE = "IronSoul_CavePlannerDecision_V61_30.txt"
 
 Planner.CAVES = {
     Cave1 = {WorldId="Cave1", Name="Cave of Crystal", RewardKind="CrystalShards"},
@@ -45,7 +40,7 @@ local function status(text)
     if type(fn) == "function" then
         pcall(fn, "Cave smart | " .. tostring(text))
     end
-    print("[IronSoul Cave Planner V61.26]", tostring(text))
+    print("[IronSoul Cave Planner V61.30]", tostring(text))
 end
 
 local function parse(text)
@@ -185,7 +180,6 @@ local function allRoundConfigs()
     else
         for _, cfg in pairs(ResWorldRound) do add(cfg) end
     end
-
     return out
 end
 
@@ -212,19 +206,25 @@ local function highestReadyCaveCfg(worldId, data)
             local diff = tonumber(cfg.DiffLevel)
             local ticketId, ticketCost = ticketInfo(cfg)
             local ticketCompatible = ticketId == nil or ticketId == "Ticket1"
+            local recLv = tonumber(cfg.RecPlayerLv) or 0
+            local recPower = tonumber(cfg.RecBattlePower) or 0
+            local minPower = recPower > 0
+                and math.ceil(recPower * Planner.POWER_READY_RATIO)
+                or 0
 
             if diff
                 and ticketCompatible
                 and isUnlocked(worldId, diff)
-                and lv >= (tonumber(cfg.RecPlayerLv) or 0)
-                and pw >= (tonumber(cfg.RecBattlePower) or 0)
+                and lv >= recLv
+                and (recPower <= 0 or pw >= minPower)
                 and tickets(data) - ticketCost >= Planner.TICKET_RESERVE
             then
                 table.insert(rows, {
                     Cfg = cfg,
                     Diff = diff,
-                    RecLevel = tonumber(cfg.RecPlayerLv) or 0,
-                    RecPower = tonumber(cfg.RecBattlePower) or 0,
+                    RecLevel = recLv,
+                    RecPower = recPower,
+                    MinPower = minPower,
                     TicketId = ticketId,
                     TicketCost = ticketCost,
                 })
@@ -260,6 +260,7 @@ local function choose(data)
             Diff = ready.Diff,
             RecLevel = ready.RecLevel,
             RecPower = ready.RecPower,
+            MinPower = ready.MinPower,
             TicketCost = ready.TicketCost,
             Current = current or 0,
             Deficit = deficit or 1,
@@ -269,9 +270,6 @@ local function choose(data)
         })
     end
 
-    -- Guaranteed equipment power stays first because this blocker is exact and
-    -- deterministic. The difficulty resolver still spends the same ticket on
-    -- the highest useful Crystal cave instead of hardcoded D1.
     local missingShards = tonumber(demand.CrystalShardsMissing or 0) or 0
     if missingShards > 0 then
         local current = rewardValue(data, "CrystalShards")
@@ -285,8 +283,6 @@ local function choose(data)
         )
     end
 
-    -- First-pet acquisition is now a real progression blocker. Cave3 D1 cannot
-    -- roll an egg, so never spend an egg-seeking ticket below D2.
     if not hasPet(data) and not hasEgg(data) then
         addCandidate(
             "Cave3",
@@ -299,7 +295,6 @@ local function choose(data)
         )
     end
 
-    -- Enchant remains exact-state driven, not a fake stock-count target.
     local cave2Needed = boolValue(demand.Cave2Needed)
     local enchantMissing = tonumber(demand.EnchantStoneMissing or 0) or 0
     local eligibleEmpty = tonumber(demand.EnchantEligibleEmptySlots or 0) or 0
@@ -437,6 +432,7 @@ local function auditDecision(data, candidate, candidates, reason, demand)
         "Reason=" .. tostring(reason),
         "Level=" .. tostring(level(data)),
         "Power=" .. tostring(power()),
+        "PowerReadyRatio=" .. tostring(Planner.POWER_READY_RATIO),
         "Ticket1=" .. tostring(tickets(data)),
         "Reserve=" .. tostring(Planner.TICKET_RESERVE),
         "Cooldown=" .. tostring(Planner.COOLDOWN_SECONDS),
@@ -462,6 +458,7 @@ local function auditDecision(data, candidate, candidates, reason, demand)
                 .. ",Reason=" .. tostring(row.Reason)
                 .. ",RecLv=" .. tostring(row.RecLevel)
                 .. ",RecPower=" .. tostring(row.RecPower)
+                .. ",MinPower78=" .. tostring(row.MinPower)
                 .. ",TicketCost=" .. tostring(row.TicketCost)
                 .. ",Current=" .. tostring(row.Current)
                 .. ",Target=" .. tostring(row.Target)
@@ -546,6 +543,8 @@ function Planner.Run()
         PlannerReason = tostring(candidate.Reason),
         PlannerTarget = tostring(candidate.Target),
         PlannerDeficit = tostring(candidate.Deficit),
+        RecPower = tostring(candidate.RecPower),
+        MinPower78 = tostring(candidate.MinPower),
     }
     writePending(pending)
 
@@ -560,6 +559,7 @@ function Planner.Run()
         "START " .. cave.Name
             .. " | D" .. tostring(candidate.Diff)
             .. " | " .. tostring(candidate.Reason)
+            .. " | power=" .. tostring(power()) .. "/min=" .. tostring(candidate.MinPower)
             .. " | ticket=" .. tostring(candidate.TicketCost)
     )
 
