@@ -1,19 +1,14 @@
 --========================================================--
--- IRON SOUL - SMART CAVE PLANNER V61.18
+-- IRON SOUL - DEMAND-DRIVEN SMART CAVE PLANNER V61.23
 --
--- Lobby-side resource scheduler. Cave Tickets are limited, so this module
--- chooses ONE Trial cave only when the account is eligible and a useful
--- material reserve is below target. It never chains paid Cave runs because a
--- cooldown + ticket reserve sends the account back to Story progression.
+-- Cave tickets are limited. Starting V61.23, automatic Cave selection no
+-- longer uses the old fixed 18-shard / 4-rune / 28-scale reserve rotation.
 --
--- Validated live gates/screens (2026-08-12):
---   Cave1 Trial: Lv10 / Power480  -> Crystal Shards
---   Cave2 Trial: Lv13 / Power780  -> Runes / EnchantedStone
---   Cave3 Trial: Lv13 / Power940  -> Dragon-scale pet materials
+-- Current production demand source:
+--   Cave1 <- systems/fortify_manager.lua exact CrystalShards blocker.
 --
--- Policy targets below are conservative farming buffers, NOT claimed game
--- upgrade costs. Exact spending demand will replace them as upgrade protocols
--- become validated.
+-- Cave2/Cave3 automatic spending is temporarily held until Enchant/Pet
+-- managers publish their own exact demand. Manual Cave entry still works.
 --========================================================--
 
 local Players = game:GetService("Players")
@@ -23,12 +18,15 @@ local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 local Planner = {}
 
-Planner.VERSION = "V61.18"
+Planner.VERSION = "V61.23"
 Planner.TICKET_RESERVE = 5
 Planner.COOLDOWN_SECONDS = 360
 Planner.TRIAL_DIFF = 1
 Planner.PENDING_FILE = "IronSoul_CavePending_V61_17.txt"
+-- Keep the existing state filename so cooldown survives the upgrade.
 Planner.STATE_FILE = "IronSoul_CavePlanner_V61_18.txt"
+Planner.DEMAND_FILE = "IronSoul_UpgradeDemand_V61_23.txt"
+Planner.DECISION_FILE = "IronSoul_CavePlannerDecision_V61_23.txt"
 
 Planner.CAVES = {
     Cave1 = {
@@ -37,8 +35,6 @@ Planner.CAVES = {
         MinLevel = 10,
         MinPower = 480,
         RewardKind = "CrystalShards",
-        Target = 18,
-        BasePriority = 1.00,
     },
     Cave2 = {
         WorldId = "Cave2",
@@ -46,8 +42,6 @@ Planner.CAVES = {
         MinLevel = 13,
         MinPower = 780,
         RewardKind = "EnchantedStone",
-        Target = 4,
-        BasePriority = 1.10,
     },
     Cave3 = {
         WorldId = "Cave3",
@@ -55,8 +49,6 @@ Planner.CAVES = {
         MinLevel = 13,
         MinPower = 940,
         RewardKind = "WholeDragonScale",
-        Target = 28,
-        BasePriority = 1.15,
         RequiresPet = true,
     },
 }
@@ -66,7 +58,7 @@ local function status(text)
     if type(fn) == "function" then
         pcall(fn, "Cave smart | " .. tostring(text))
     end
-    print("[IronSoul Cave Planner V61.18]", tostring(text))
+    print("[IronSoul Cave Planner V61.23]", tostring(text))
 end
 
 local function parse(text)
@@ -99,6 +91,11 @@ end
 
 local function readState()
     local text = readFile(Planner.STATE_FILE)
+    return text and parse(text) or {}
+end
+
+local function readDemand()
+    local text = readFile(Planner.DEMAND_FILE)
     return text and parse(text) or {}
 end
 
@@ -179,36 +176,42 @@ end
 local function choose(data)
     local lv = level(data)
     local pw = power()
-    local pets = petCount(data)
+    local demand = readDemand()
     local candidates = {}
 
-    for _, cave in pairs(Planner.CAVES) do
-        local current = rewardValue(data, cave.RewardKind)
-        local target = tonumber(cave.Target) or 0
-        local eligible = lv >= cave.MinLevel and pw >= cave.MinPower
+    -- V61.23: real Fortify blocker only. The target is exactly enough current
+    -- CrystalShards to satisfy the remaining guaranteed +4 demand while
+    -- respecting the Fortify manager's reserve policy.
+    local cave1 = Planner.CAVES.Cave1
+    local missingShards = tonumber(demand.CrystalShardsMissing or 0) or 0
+    local currentShards = rewardValue(data, cave1.RewardKind)
 
-        if cave.RequiresPet and pets <= 0 then
-            eligible = false
-        end
-
-        if eligible and target > 0 and current < target then
-            local deficit = math.max(0, target - current)
-            local ratio = deficit / target
-            table.insert(candidates, {
-                Cave = cave,
-                Current = current,
-                Deficit = deficit,
-                Score = (tonumber(cave.BasePriority) or 1) + ratio,
-            })
-        end
+    if missingShards > 0
+        and lv >= cave1.MinLevel
+        and pw >= cave1.MinPower
+    then
+        table.insert(candidates, {
+            Cave = cave1,
+            Current = currentShards,
+            Deficit = missingShards,
+            Target = currentShards + missingShards,
+            Score = 1000 + missingShards,
+            Reason = "FORTIFY_CRYSTAL_BLOCKER",
+        })
     end
+
+    -- Cave2 is intentionally NOT selected from the old EnchantedStone table
+    -- entry count. That measurement proved unreliable after live Cave2 clears.
+    -- Enchant automation will publish a real stone/rune demand here next.
+    --
+    -- Cave3 likewise waits for exact pet-upgrade costs.
 
     table.sort(candidates, function(a,b)
         if a.Score ~= b.Score then return a.Score > b.Score end
         return a.Cave.WorldId < b.Cave.WorldId
     end)
 
-    return candidates[1], candidates
+    return candidates[1], candidates, demand
 end
 
 local function roomContainer()
@@ -321,11 +324,11 @@ local function enterRoom(room)
     return false
 end
 
-local function auditDecision(data, candidate, candidates, reason)
+local function auditDecision(data, candidate, candidates, reason, demand)
     if type(writefile) ~= "function" then return end
 
     local rows = {
-        "Version=V61.18",
+        "Version=" .. Planner.VERSION,
         "Reason=" .. tostring(reason),
         "Level=" .. tostring(level(data)),
         "Power=" .. tostring(power()),
@@ -333,9 +336,9 @@ local function auditDecision(data, candidate, candidates, reason)
         "Reserve=" .. tostring(Planner.TICKET_RESERVE),
         "Cooldown=" .. tostring(Planner.COOLDOWN_SECONDS),
         "CrystalShards=" .. tostring(rewardValue(data, "CrystalShards")),
-        "Runes=" .. tostring(rewardValue(data, "EnchantedStone")),
-        "WholeDragonScale=" .. tostring(rewardValue(data, "WholeDragonScale")),
-        "PetsOwned=" .. tostring(petCount(data)),
+        "FortifyCrystalMissing=" .. tostring(demand and demand.CrystalShardsMissing or 0),
+        "TemporaryCave2=false",
+        "TemporaryCave3=false",
         "Chosen=" .. tostring(candidate and candidate.Cave.WorldId or "none"),
     }
 
@@ -343,13 +346,15 @@ local function auditDecision(data, candidate, candidates, reason)
         table.insert(rows,
             "Candidate" .. tostring(i)
                 .. "=" .. tostring(row.Cave.WorldId)
+                .. ",Reason=" .. tostring(row.Reason)
                 .. ",Current=" .. tostring(row.Current)
-                .. ",Target=" .. tostring(row.Cave.Target)
+                .. ",Target=" .. tostring(row.Target)
+                .. ",Deficit=" .. tostring(row.Deficit)
                 .. ",Score=" .. string.format("%.3f", row.Score)
         )
     end
 
-    pcall(writefile, "IronSoul_CavePlannerDecision_V61_18.txt", table.concat(rows, "\n"))
+    pcall(writefile, Planner.DECISION_FILE, table.concat(rows, "\n"))
 end
 
 function Planner.Run()
@@ -367,24 +372,24 @@ function Planner.Run()
     local state = readState()
     local last = tonumber(state.LastCaveUnix or 0) or 0
     local cooldownLeft = math.max(0, Planner.COOLDOWN_SECONDS - (os.time() - last))
-    local candidate, all = choose(data)
+    local candidate, all, demand = choose(data)
 
     if ticketCount <= Planner.TICKET_RESERVE then
-        auditDecision(data, candidate, all, "TICKET_RESERVE")
+        auditDecision(data, candidate, all, "TICKET_RESERVE", demand)
         return false, "TICKET_RESERVE"
     end
 
     if cooldownLeft > 0 then
-        auditDecision(data, candidate, all, "COOLDOWN_" .. tostring(cooldownLeft))
+        auditDecision(data, candidate, all, "COOLDOWN_" .. tostring(cooldownLeft), demand)
         return false, "COOLDOWN"
     end
 
     if not candidate then
-        auditDecision(data, nil, all, "MATERIAL_TARGETS_MET_OR_NOT_ELIGIBLE")
+        auditDecision(data, nil, all, "NO_VALID_UPGRADE_DEMAND", demand)
         return false, "NO_NEED"
     end
 
-    auditDecision(data, candidate, all, "START_CAVE")
+    auditDecision(data, candidate, all, "START_CAVE", demand)
 
     local room
     local existing = enteredRoomId()
@@ -412,7 +417,7 @@ function Planner.Run()
     end
 
     local pending = {
-        Version = "V61.18",
+        Version = Planner.VERSION,
         Resolved = "false",
         StartedUnix = tostring(os.time()),
         WorldId = cave.WorldId,
@@ -421,21 +426,24 @@ function Planner.Run()
         RewardKind = cave.RewardKind,
         RewardBefore = tostring(candidate.Current),
         TicketBeforeEntry = tostring(ticketCount),
-        PlannerReason = "SMART_DEFICIT",
-        PlannerTarget = tostring(cave.Target),
+        PlannerReason = tostring(candidate.Reason),
+        PlannerTarget = tostring(candidate.Target),
+        PlannerDeficit = tostring(candidate.Deficit),
     }
     writePending(pending)
 
     state.LastCaveUnix = tostring(os.time())
     state.LastWorldId = cave.WorldId
-    state.LastReason = "SMART_DEFICIT"
+    state.LastReason = tostring(candidate.Reason)
     state.LastTicketBefore = tostring(ticketCount)
     writeState(state)
 
     status(
         "START " .. cave.WorldId
-            .. " Trial | have=" .. tostring(candidate.Current)
-            .. " target=" .. tostring(cave.Target)
+            .. " Trial | reason=" .. tostring(candidate.Reason)
+            .. " have=" .. tostring(candidate.Current)
+            .. " target=" .. tostring(candidate.Target)
+            .. " missing=" .. tostring(candidate.Deficit)
             .. " tickets=" .. tostring(ticketCount)
     )
 
