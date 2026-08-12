@@ -1,14 +1,13 @@
 --========================================================--
--- IRON SOUL - DEMAND-DRIVEN SMART CAVE PLANNER V61.23
+-- IRON SOUL - DEMAND-DRIVEN SMART CAVE PLANNER V61.24
 --
--- Cave tickets are limited. Starting V61.23, automatic Cave selection no
--- longer uses the old fixed 18-shard / 4-rune / 28-scale reserve rotation.
+-- Paid Cave selection is driven by real blocked upgrades, not fixed stock
+-- targets.
 --
--- Current production demand source:
---   Cave1 <- systems/fortify_manager.lua exact CrystalShards blocker.
---
--- Cave2/Cave3 automatic spending is temporarily held until Enchant/Pet
--- managers publish their own exact demand. Manual Cave entry still works.
+-- Current production demand sources:
+--   Cave1 <- Blessing/Fortify CrystalShards blocker.
+--   Cave2 <- Smart Enchant: useful +4 keeper has empty slot but no stone.
+--   Cave3 <- held until pet-upgrade manager publishes exact material demand.
 --========================================================--
 
 local Players = game:GetService("Players")
@@ -18,15 +17,15 @@ local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 local Planner = {}
 
-Planner.VERSION = "V61.23"
+Planner.VERSION = "V61.24"
 Planner.TICKET_RESERVE = 5
 Planner.COOLDOWN_SECONDS = 360
 Planner.TRIAL_DIFF = 1
 Planner.PENDING_FILE = "IronSoul_CavePending_V61_17.txt"
--- Keep the existing state filename so cooldown survives the upgrade.
+-- Preserve prior cooldown state across planner upgrades.
 Planner.STATE_FILE = "IronSoul_CavePlanner_V61_18.txt"
 Planner.DEMAND_FILE = "IronSoul_UpgradeDemand_V61_23.txt"
-Planner.DECISION_FILE = "IronSoul_CavePlannerDecision_V61_23.txt"
+Planner.DECISION_FILE = "IronSoul_CavePlannerDecision_V61_24.txt"
 
 Planner.CAVES = {
     Cave1 = {
@@ -58,7 +57,7 @@ local function status(text)
     if type(fn) == "function" then
         pcall(fn, "Cave smart | " .. tostring(text))
     end
-    print("[IronSoul Cave Planner V61.23]", tostring(text))
+    print("[IronSoul Cave Planner V61.24]", tostring(text))
 end
 
 local function parse(text)
@@ -158,10 +157,6 @@ local function tickets(data)
     return data and data.Currency and tonumber(data.Currency.Ticket1) or 0
 end
 
-local function petCount(data)
-    return count(data and data.Pets and data.Pets.Owned)
-end
-
 local function rewardValue(data, kind)
     if kind == "CrystalShards" then
         return data and data.Crystals and tonumber(data.Crystals.CrystalShards) or 0
@@ -173,15 +168,18 @@ local function rewardValue(data, kind)
     return 0
 end
 
+local function boolValue(v)
+    return tostring(v) == "true"
+end
+
 local function choose(data)
     local lv = level(data)
     local pw = power()
     local demand = readDemand()
     local candidates = {}
 
-    -- V61.23: real Fortify blocker only. The target is exactly enough current
-    -- CrystalShards to satisfy the remaining guaranteed +4 demand while
-    -- respecting the Fortify manager's reserve policy.
+    -- Guaranteed Blessing/Fortify remains higher priority than Enchant because
+    -- it is deterministic and its exact CrystalShards blocker is known.
     local cave1 = Planner.CAVES.Cave1
     local missingShards = tonumber(demand.CrystalShardsMissing or 0) or 0
     local currentShards = rewardValue(data, cave1.RewardKind)
@@ -200,11 +198,32 @@ local function choose(data)
         })
     end
 
-    -- Cave2 is intentionally NOT selected from the old EnchantedStone table
-    -- entry count. That measurement proved unreliable after live Cave2 clears.
-    -- Enchant automation will publish a real stone/rune demand here next.
-    --
-    -- Cave3 likewise waits for exact pet-upgrade costs.
+    -- V61.24 Cave2 demand is NOT a stock-count target. It is a direct state:
+    -- useful +4 keeper still has an empty enchant slot, but Enchant manager has
+    -- zero usable stones. One Cave2 run is requested, then Lobby re-evaluates.
+    local cave2 = Planner.CAVES.Cave2
+    local cave2Needed = boolValue(demand.Cave2Needed)
+    local enchantMissing = tonumber(demand.EnchantStoneMissing or 0) or 0
+    local eligibleEmpty = tonumber(demand.EnchantEligibleEmptySlots or 0) or 0
+    local currentStones = rewardValue(data, cave2.RewardKind)
+
+    if cave2Needed
+        and enchantMissing > 0
+        and eligibleEmpty > 0
+        and lv >= cave2.MinLevel
+        and pw >= cave2.MinPower
+    then
+        table.insert(candidates, {
+            Cave = cave2,
+            Current = currentStones,
+            Deficit = 1,
+            Target = currentStones + 1,
+            Score = 700 + math.min(eligibleEmpty, 50),
+            Reason = "ENCHANT_STONE_BLOCKER",
+        })
+    end
+
+    -- Cave3 remains held until pet growth publishes exact scale/claw demand.
 
     table.sort(candidates, function(a,b)
         if a.Score ~= b.Score then return a.Score > b.Score end
@@ -336,9 +355,13 @@ local function auditDecision(data, candidate, candidates, reason, demand)
         "Reserve=" .. tostring(Planner.TICKET_RESERVE),
         "Cooldown=" .. tostring(Planner.COOLDOWN_SECONDS),
         "CrystalShards=" .. tostring(rewardValue(data, "CrystalShards")),
+        "EnchantedStones=" .. tostring(rewardValue(data, "EnchantedStone")),
         "FortifyCrystalMissing=" .. tostring(demand and demand.CrystalShardsMissing or 0),
-        "TemporaryCave2=false",
-        "TemporaryCave3=false",
+        "EnchantEligibleEmptySlots=" .. tostring(demand and demand.EnchantEligibleEmptySlots or 0),
+        "EnchantUsableStones=" .. tostring(demand and demand.EnchantUsableStones or 0),
+        "EnchantStoneMissing=" .. tostring(demand and demand.EnchantStoneMissing or 0),
+        "Cave2Needed=" .. tostring(demand and demand.Cave2Needed or false),
+        "Cave3Needed=false",
         "Chosen=" .. tostring(candidate and candidate.Cave.WorldId or "none"),
     }
 
