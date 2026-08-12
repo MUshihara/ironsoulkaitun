@@ -60,9 +60,21 @@ Fresh accounts have progressed repeatedly through World1 D1/D2/D3. V61.15 routin
 - `CanUnlockSkill` arity4 checks branch `NeedLv`; `HasEnoughWpnProf` checks proficiency.
 - **No ore/crystal/currency/material cost appears in the actual level-skill unlock path. Do not invent one.** Gray/The Guide is tutorial/UI context, not proven server payment gate.
 - Server automatically populates `SkillTree.Unlock` when requirements are met. Do not force speculative unlock commands.
-- `systems/skill_manager.lua` V61.20.1 runs from the existing post-Lobby-readiness maintenance hook and only sends the already-proven `RemoteEvent("ActiveSkill", class, UnlockSkillN)` for branches the server has already granted.
-- Manager is weapon-aware across all classes present in `SkillTree.Unlock`, verifies `PlayerData.SkillTree.Active`, and fails closed.
-- Log: `IronSoul_SkillManager_V61_20.txt`.
+- `systems/skill_manager.lua` V61.20.1 only activates branches the server already granted, across all weapon classes, and verifies `PlayerData.SkillTree.Active`.
+- Latest skill-manager test: 9 server-unlocked branches, 5 newly activated, 4 already active, 0 failed.
+
+## V61.21 weapon-aware combat loadout
+- **Skill Tree activation and equipped combat loadout are separate systems.** Activating a branch does not guarantee it is the skill sitting in Skill1/Skill2/SkillU.
+- Proven V43.1 protocol: `WeaponUtil.RemoteEvent:FireServer("EquipSkill", weaponId, slot, skillId)`.
+- Verify effective loadout with `WeaponUtil:GetWeaponSkillId(player, weaponId, slot)`; validate eligibility with `WeaponUtil:CanEquipSkill(...)`.
+- `systems/skill_loadout_manager.lua` V61.21 runs from the small combat entry wrapper, after Lobby equipment choice is already final and before the historical combat controller starts.
+- It reads live equipped weapon class/id from `WeaponUtil:GetEquippedWeaponClass/GetEquippedWeaponId`, so Sword/Staff/Heavy/Sickle/Fist/Greatsword each receive their own compatible loadout.
+- Candidate skills come from live `ResSkillTree`: base Skill1/Skill2/SkillU plus only level branches that are both server-unlocked and active.
+- Basic skills compete for Skill1+Skill2; Ultimate skills compete for SkillU.
+- Selection uses live `ResSkill` + `ResSkillStage` combat data: damage events, effective cooldown, action time, range, charge and mitigation. `CanEquipSkill` is still authoritative; invalid candidates are never forced.
+- Every change is verified from the effective WeaponUtil getter. Failure is fail-closed: keep existing loadout and continue dungeon.
+- Log: `IronSoul_SkillLoadout_V61_21.txt`.
+- Cave V61.19 startup safety remains intact: Cave chase stays armed/motionless while loadout maintenance runs and only moves after combat-controller readiness.
 
 ## Settlement / replay
 - Inventory maintenance threshold 85; full/high inventory at settlement -> Lobby immediately.
@@ -72,6 +84,6 @@ Fresh accounts have progressed repeatedly through World1 D1/D2/D3. V61.15 routin
 - `FortifyUtil.Fortify` arity3.
 - `EnchantmentUtil.Enchant` arity5; `UnEnchant` arity4.
 - Exact unattended mutation tuple still needs validation before enabling spending.
-- Recommended next progression work: verify V61.20 skill manager once -> Fortify/Blessing protocol -> Enchant -> pet growth -> Endless Tower.
+- Recommended next progression work: verify V61.21 loadout once -> Fortify/Blessing protocol -> Enchant -> pet growth -> Endless Tower.
 
 Repo is source of truth when chat memory conflicts.
